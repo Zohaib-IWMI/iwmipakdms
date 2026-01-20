@@ -1,0 +1,27 @@
+body {
+  margin: 0;
+}
+
+body::-webkit-scrollbar {
+  width: 8px;
+}
+
+body::-webkit-scrollbar-track {
+  background: white;
+}
+
+body::-webkit-scrollbar-thumb {
+  background-color: #2a547c;
+  border: 3px solid #2a547c;
+}
+
+.ant-menu-horizontal,
+.ant-menu-item::after,
+.ant-menu-submenu::after {
+  border: none !important;
+}
+
+.ant-menu-item:hover {
+  color: #224669 !important;
+  font-weight: bold;
+}

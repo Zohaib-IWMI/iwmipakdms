@@ -1,0 +1,146 @@
+services:
+  mysqldb:
+    image: mysql:5.7
+    restart: unless-stopped
+    env_file: ./.env
+    environment:
+      - MYSQL_ROOT_PASSWORD=$MYSQLDB_ROOT_PASSWORD
+      - MYSQL_DATABASE=$MYSQLDB_DATABASE
+    ports:
+      - $MYSQLDB_LOCAL_PORT:$MYSQLDB_DOCKER_PORT
+    volumes:
+      - db:/var/lib/mysql
+      - "./scripts/script.sql:/docker-entrypoint-initdb.d/script.sql"
+    networks:
+      - backend
+
+  spatialdb:
+    # container_name: spatialdatabase 
+    image: postgis/postgis
+    environment:
+      # - POSTGRES_HOST=localhost
+      - POSTGRES_USER=iwmi
+      - POSTGRES_PASSWORD=72342
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=pakdms
+      - ALLOW_IP_RANGE=0.0.0.0/0
+    expose:
+      - "5432"
+    command: -p 5432
+    ports:
+      - 5432:5432
+    restart: on-failure
+    healthcheck:
+      test: "PGPASSWORD=iwmi pg_isready -h 127.0.0.1 -U iwmi -d pakdms"
+    volumes:
+      - ./scripts/pg.sql:/docker-entrypoint-initdb.d/data.sql
+    networks:
+      - frontend
+
+  backend:
+    depends_on:
+      - mysqldb
+    build: ./backend
+    restart: unless-stopped
+    env_file: ./.env
+    ports:
+      - $NODE_LOCAL_PORT:$NODE_DOCKER_PORT
+    volumes:
+      - ./uploads:/uploads
+    environment:
+      - DB_HOST=mysqldb
+      - DB_USER=$MYSQLDB_USER
+      - DB_PASSWORD=$MYSQLDB_ROOT_PASSWORD
+      - DB_NAME=$MYSQLDB_DATABASE
+      - DB_PORT=$MYSQLDB_DOCKER_PORT
+      - CLIENT_ORIGIN=$CLIENT_ORIGIN
+    networks:
+      - backend
+      - frontend
+
+  python:
+    depends_on:
+      - spatialdb
+      - backend
+    build: ./python
+    restart: unless-stopped
+    env_file: ./.env
+    ports:
+      - $PYTHON_LOCAL_PORT:$PYTHON_DOCKER_PORT
+    volumes:
+      - ./uploads:/uploads
+    environment:
+      - DB_HOST=mysqldb
+      - DB_USER=$MYSQLDB_USER
+      - DB_PASSWORD=$MYSQLDB_ROOT_PASSWORD
+      - DB_NAME=$MYSQLDB_DATABASE
+      - DB_PORT=$MYSQLDB_DOCKER_PORT
+      - CLIENT_ORIGIN=$CLIENT_ORIGIN
+    networks:
+      - backend
+      - frontend
+
+  frontend:
+    image: nginx:latest
+    build:
+      context: ./frontend
+    ports:
+      - 80:80
+      - 443:443
+    restart: always
+    volumes:
+      - ./nginx/conf/:/etc/nginx/conf.d/:ro
+      - ./certbot/www:/var/www/certbot/:ro
+      - ./certbot/conf/:/etc/nginx/ssl/:ro
+    depends_on:
+      - mysqldb
+      - backend
+    networks:
+      - frontend
+
+  certbot:
+    image: certbot/certbot:latest
+    depends_on:
+      - frontend
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
+    volumes:
+      - ./certbot/www/:/var/www/certbot/:rw
+      - ./certbot/conf/:/etc/letsencrypt/:rw
+    networks:
+      - frontend
+    environment:
+      - TERM=xterm
+
+  geoserver:
+    image: kartoza/geoserver:latest
+    # image: docker.osgeo.org/geoserver:2.23.1
+    depends_on:
+      - frontend
+      - mysqldb
+      - backend
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data_dir:/opt/geoserver/data_dir/
+      - /var/www/data:/var/tmp
+    networks:
+      - frontend
+    environment:
+    #   - HOST=spatialdb
+    #   - POSTGRES_PORT=5432                
+    #   - POSTGRES_DB=pakdms                   
+    #   - POSTGRES_USER=iwmi    
+    #   - POSTGRES_PASS=iwmi    
+    #   - POSTGRES_SCHEMA=public           
+    #   - DISK_QUOTA_SIZE=5         
+      GEOSERVER_DATA_DIR: /opt/geoserver/data_dir
+      GEOSERVER_ADMIN_USER: admin
+      GEOSERVER_ADMIN_PASSWORD: geoserver
+volumes:
+  db:
+  geoserver-data:
+  uploads:
+
+networks:
+  backend:
+  frontend:

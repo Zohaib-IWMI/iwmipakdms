@@ -1,0 +1,9 @@
+.login-card-wrapper {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.login-card {
+  margin-top: 5em;
+}

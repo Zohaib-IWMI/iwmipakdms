@@ -1,0 +1,194 @@
+.discription-text {
+  font-family: "National";
+}
+.user-guide-index-container {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+.index-image {
+  height: 400px;
+  width: 100%;
+}
+.top-index-image {
+  height: 400px;
+  width: 100%;
+}
+/* @media screen and (max-width: 575px) {
+  .top-index-image {
+    height: 400px;
+    width: 100%;
+    margin-top: -7.4vh;
+  }
+}
+@media screen and (min-width: 992px) {
+  .top-index-image {
+    height: 400px;
+    width: 100%;
+    margin-top: -1.7vh;
+  }
+} */
+.user-guide-bottom-container {
+  display: flex;
+  justify-content: center;
+  margin-top: 38px;
+}
+.south-asia-heading {
+  color: #ffffff;
+  position: absolute;
+  font-size: 30px;
+  top: 250px;
+  font-family: "DM Serif Text";
+  text-align: center;
+}
+.common-search-bar {
+  box-shadow: 0px 6px 8px 6px rgba(0, 0, 0, 0.1);
+  border-radius: 5px;
+  background: white;
+  /* width: 70%; */
+}
+.backarrow-position {
+  margin-top: 29px;
+}
+.news-feed-backarrow-position {
+  margin-top: 6%;
+  margin-right: 41%;
+}
+
+.input-box {
+  background: white;
+}
+.rendered-container {
+  margin-left: 30px;
+  margin-right: 30px;
+  margin-top: 10px;
+  margin-bottom: 15px;
+}
+.text-result {
+  height: 40vh !important;
+}
+.search-content-container {
+  display: flex;
+  flex-direction: row;
+  justify-content: flex-start;
+  align-items: flex-start;
+  padding-left: 70px;
+}
+.search-content {
+  border: 1px solid grey;
+  width: 60%;
+  margin: 10px;
+  padding-left: 15px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+.search-content:hover {
+  background-color: #2a547c;
+}
+.search-content-text {
+  font-family: "National";
+  font-size: 24px;
+  font-weight: 500;
+}
+.search-content-para-text {
+  font-family: "National";
+  font-size: 15px;
+}
+.sidebar-header-container {
+  display: flex;
+  flex-direction: row;
+  margin-left: 15px;
+  margin-top: 10px;
+}
+.collapse-icon-down {
+  color: #2a547c;
+  margin-bottom: 5px;
+}
+.collapse-icon-up {
+  color: #2a547c;
+  margin-bottom: 8px;
+}
+.topic-heading-text {
+  margin-left: 10px;
+  color: #2a547c;
+  font-weight: bold;
+}
+.no-results-text {
+  margin-left: 15%;
+}
+.sidebar-collapse {
+  margin-top: 30px;
+}
+.span-sidebar {
+  position: relative;
+  margin-top: 20px;
+}
+.detailed-heading-text {
+  color: #363636;
+  font-size: 36px;
+  font-family: "National";
+}
+
+.user-guide-detailed-heading-text {
+  color: #0297a6;
+  font-size: 24px;
+  font-family: "DM Serif Text";
+  padding-top: 20px;
+  font-weight: 400;
+}
+
+.search-content-header {
+  margin-top: 20.9vh;
+}
+.user-search-content-no-results {
+  margin-top: 25vh;
+}
+
+.user-guide-search-content > p > img {
+  height: 140px !important;
+  width: 100% !important;
+}
+
+.user-guide-card-content {
+  text-align: justify;
+}
+
+.searched-results {
+  color: #2a547c;
+  font-size: 20px;
+  font-weight: 500;
+  margin: 30px;
+  margin-top: 10px;
+}
+.content-exceeded {
+  text-align: justify;
+  overflow-y: none;
+}
+.search-content-img > p > img {
+  height: 60% !important;
+  width: 64% !important;
+}
+.right-arrow-icon {
+  cursor: pointer;
+}
+.user-guide-headers {
+  font-family: DM Serif Text;
+  font-size: 30px;
+  font-weight: 400;
+  /* line-height: 66px; */
+  letter-spacing: 0.02em;
+  text-align: left;
+  margin-top: 30px !important;
+}
+/* @media screen and (max-width: 575px) {
+  .south-asia-heading {
+    font-size: 18px;
+  }
+}
+@media screen and (min-width: 577px) and (max-width: 786px) {
+  .south-asia-heading {
+    font-size: 24px;
+  }
+} */

@@ -1,0 +1,58 @@
+.about-us {
+  font-family: 'DM Serif Text';
+  font-weight: 400;
+  font-size: 36px;
+  color: #3870af;
+  padding-top: 25px;
+}
+.about-us-container {
+  padding: 35px;
+}
+.about-us-content {
+  margin-top: 20vh;
+}
+.readmore-text {
+  cursor: pointer;
+  text-decoration: none;
+  color: #3870af;
+  font-weight: 500;
+}
+.about-us-main-content {
+  /* color: #363636; */
+  font-weight: 500;
+  font-family: 'National';
+  font-size: 20px;
+  text-justify: inter-word;
+  text-align: justify;
+}
+.image-container {
+  position: relative;
+}
+.back-image {
+  height: 400px;
+  width: 90%;
+  margin-left: -50px;
+}
+.front-image {
+  position: absolute;
+  left: 70px;
+  height: 80%;
+  width: 70%;
+}
+.about-us-image-text {
+  color: #ffffff;
+  position: absolute;
+  font-size: 52px;
+  top: 150px;
+  font-family: 'DM Serif Text';
+}
+/* 
+@media screen and (min-width:576px){
+  .front-image{
+    height:90%;
+    width:80%;
+  }
+  .back-image{
+    height:100%;
+  }
+} */

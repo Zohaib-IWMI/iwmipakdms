@@ -1,0 +1,142 @@
+/* Footer.css */
+.footer-section {
+  color: #ffffff;
+  padding: 10px 0 0;
+}
+
+.logos {
+  width: auto;
+  height: 80px;
+}
+
+.follow-us {
+  font-family: "National", sans-serif;
+  font-weight: 500;
+  font-size: 16px;
+  line-height: 18.7px;
+  margin-bottom: 15px;
+  margin-left: 13%;
+}
+
+.social-icons img {
+  width: 40px;
+  height: 40px;
+  margin: 0 5px;
+}
+
+.copyright {
+  font-family: "National";
+  font-weight: 500;
+  font-size: 12px;
+  line-height: 15.56px;
+}
+
+.copyright img {
+  margin-right: 5px;
+}
+
+.terms {
+  font-family: "National";
+  font-weight: 500;
+  font-size: 16px;
+  line-height: 18.7px;
+}
+
+@media (max-width: 768px) {
+  .logos {
+    margin: 0 auto;
+    height: 60px;
+  }
+
+  .footer-section {
+    text-align: center;
+  }
+
+  .social-icons {
+    justify-content: center;
+    margin-top: 20px;
+    margin-bottom: 20px;
+  }
+
+  .copyright,
+  .terms {
+    justify-content: center;
+    margin-bottom: 10px;
+  }
+}
+
+@media (min-width: 1351px) and (max-width: 1900px) {
+  .logos {
+    margin: 0 auto;
+    height: 50px;
+  }
+
+  .footer-section {
+    text-align: center;
+  }
+
+  .social-icons {
+    justify-content: center;
+    margin-top: 20px;
+    margin-bottom: 20px;
+  }
+
+  .copyright,
+  .terms {
+    justify-content: center;
+    margin-bottom: 10px;
+  }
+}
+
+@media (min-width: 1200px) and (max-width: 1351px) {
+  .logos {
+    margin: 0 auto;
+    height: 30px;
+  }
+
+  .footer-section {
+    text-align: center;
+  }
+
+  .social-icons {
+    justify-content: center;
+    margin-top: 20px;
+    margin-bottom: 20px;
+  }
+
+  .copyright,
+  .terms {
+    justify-content: center;
+    margin-bottom: 10px;
+  }
+}
+
+@media (min-width: 767px) and (max-width: 1200px) {
+  .logos {
+    margin: 0 auto;
+    height: 30px;
+  }
+
+  .footer-section {
+    text-align: center;
+  }
+
+  .social-icons {
+    justify-content: center;
+    margin-top: 20px;
+    margin-bottom: 20px;
+  }
+
+  .copyright,
+  .terms {
+    justify-content: center;
+    margin-bottom: 10px;
+  }
+}
+
+
+@media (max-height: 1000px) {
+  .hide-on-small-height {
+    display: none;
+  }
+}

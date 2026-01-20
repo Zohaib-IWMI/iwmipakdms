@@ -1,0 +1,37 @@
+:root,
+:host {
+  --ll-color: #fff;
+  --ll-background-color: #000;
+}
+
+.map-container {
+  height: 100%;
+  width: 100%;
+}
+
+path.leaflet-interactive:focus {
+  outline: none;
+}
+
+.leaflet-bar a {
+  color: var(--ll-color);
+  background-color: var(--ll-background-color);
+}
+
+.leaflet-control-layers-toggle {
+  background-color: var(--ll-background-color);
+}
+
+.leaflet-control-layers-list {
+  background: var(--ll-background-color);
+}
+
+.leaflet-control-layers-expanded {
+  background: var(--ll-background-color);
+  color: var(--ll-color)
+}
+
+.leaflet-draw-draw-circlemarker{
+  display: none !important;
+}
+
