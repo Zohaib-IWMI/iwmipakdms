@@ -12,6 +12,7 @@ import ContactUs from "./pages/Dashboard/ContactUs";
 import Dashboard from "./pages/Dashboard/Dashboard";
 import MapWrapper from "./pages/Map/Map";
 import Home from "./pages/Dashboard/Home";
+import FeedbackPage from "./pages/Dashboard/Feedback";
 
 import "./style/App.css";
 import UserManual from "./pages/Dashboard/UserManual";
@@ -63,6 +64,10 @@ function App() {
             element={
               <UserManual heading="User Manual" footer="Sign In" />
             }
+          />
+          <Route
+            path="feedback"
+            element={<FeedbackPage heading="Feedback" />}
           />
           <Route
             path="*"

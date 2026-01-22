@@ -31,7 +31,7 @@ function AddMask() {
       let adminUnit = admin1 && !admin2 ? "units" : "districts";
 
       let baseUrl =
-        "../geoserver/PakDMS/ows?service=WFS&version=1.0.0&request=GetFeature&typeName=PakDMS%3A" +
+        "../geoserver/ows?service=WFS&version=1.0.0&request=GetFeature&typeName=PakDMS%3A" +
         adminUnit +
         "&outputFormat=application%2Fjson";
       if (admin1 && !admin2) baseUrl += "&CQL_FILTER=name='" + admin1Name + "'";

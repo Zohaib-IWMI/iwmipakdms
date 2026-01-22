@@ -11,6 +11,7 @@ import concurrent.futures
 import requests
 import re
 import os
+import datetime
 from dotenv import load_dotenv
 import sys
 from ee_assets import *
@@ -45,6 +46,48 @@ def getIndice(analysis_startmonth, analysis_endmonth, analysis_startyear, analys
 
     analysis_startdate = ee.Date.fromYMD(analysis_startyear, analysis_startmonth, 1)
     analysis_enddate = ee.Date.fromYMD(analysis_endyear, analysis_endmonth, 1)
+
+    def _add_one_month(year, month):
+        if month == 12:
+            return year + 1, 1
+        return year, month + 1
+
+    def _get_mod16_et_pet_collection():
+        """Return ET/PET ImageCollection for the requested period.
+
+        MODIS/061/MOD16A2GF is available through 2024-12-26.
+        For dates after that, use MODIS/061/MOD16A2.
+
+        Note: Earth Engine filterDate uses an exclusive end date.
+        We use 2024-12-27 as the exclusive boundary so 2024-12-26 is included.
+        """
+        end_ex_year, end_ex_month = _add_one_month(analysis_endyear, analysis_endmonth)
+        analysis_start_py = datetime.date(analysis_startyear, analysis_startmonth, 1)
+        analysis_end_exclusive_py = datetime.date(end_ex_year, end_ex_month, 1)
+
+        gf_end_exclusive_py = datetime.date(2024, 12, 27)
+        gf_end_exclusive = ee.Date('2024-12-27')
+        ee_end_exclusive = analysis_enddate.advance(1, 'month')
+
+        if analysis_end_exclusive_py <= gf_end_exclusive_py:
+            return ee.ImageCollection('MODIS/061/MOD16A2GF') \
+                .filterBounds(geometry) \
+                .filterDate(analysis_startdate, ee_end_exclusive)
+
+        if analysis_start_py >= gf_end_exclusive_py:
+            return ee.ImageCollection('MODIS/061/MOD16A2') \
+                .filterBounds(geometry) \
+                .filterDate(analysis_startdate, ee_end_exclusive)
+
+        gf_part = ee.ImageCollection('MODIS/061/MOD16A2GF') \
+            .filterBounds(geometry) \
+            .filterDate(analysis_startdate, gf_end_exclusive)
+
+        mod16_part = ee.ImageCollection('MODIS/061/MOD16A2') \
+            .filterBounds(geometry) \
+            .filterDate(gf_end_exclusive, ee_end_exclusive)
+
+        return gf_part.merge(mod16_part)
 
     
     def monthlyMean(dataset):
@@ -353,8 +396,7 @@ def getIndice(analysis_startmonth, analysis_endmonth, analysis_startyear, analys
                 ]
             }
         case 'MAI':
-            ET_PET = ee.ImageCollection(
-                'MODIS/061/MOD16A2GF').filterDate(analysis_startdate,analysis_enddate.advance(1, 'month')).filterBounds(geometry)
+            ET_PET = _get_mod16_et_pet_collection()
             ET_PET = monthlyMean(ET_PET)
             ET_PET = ET_PET.select(['ET', 'PET'])
             mai = ET_PET.map(add_mai_band)
@@ -371,7 +413,7 @@ def getIndice(analysis_startmonth, analysis_endmonth, analysis_startyear, analys
                 ]
             }
         case 'CWD':
-            ET_PET = ee.ImageCollection('MODIS/061/MOD16A2GF').filterDate(analysis_startdate,analysis_enddate.advance(1, 'month')).filterBounds(geometry)
+            ET_PET = _get_mod16_et_pet_collection()
             ET_PET = monthlyMean(ET_PET)
             ET_PET = ET_PET.select(['PET', 'ET'])
             cwd = ET_PET.map(add_cwd_band)

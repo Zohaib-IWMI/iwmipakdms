@@ -85,7 +85,7 @@ services:
     build:
       context: ./frontend
     ports:
-      - 80:80
+      - 85:80
       - 443:443
     restart: always
     volumes:
@@ -119,7 +119,7 @@ services:
       - mysqldb
       - backend
     ports:
-      - "8080:8080"
+      - "8085:8080"
     volumes:
       - ./data_dir:/opt/geoserver/data_dir/
       - /var/www/data:/var/tmp

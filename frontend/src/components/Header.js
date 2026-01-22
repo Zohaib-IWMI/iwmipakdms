@@ -11,11 +11,14 @@ import {
 } from "../slices/mapView";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
+  faCommentDots,
   faGauge,
   faRightFromBracket,
   faRightToBracket,
 } from "@fortawesome/free-solid-svg-icons";
 import { useState } from "react";
+import { useEffect } from "react";
+import Axios from "axios";
 
 function Header(props) {
   const dispatch = useDispatch();
@@ -30,6 +33,25 @@ function Header(props) {
   };
   const navigate = useNavigate();
   const [loadings, setLoadings] = useState([]);
+
+  useEffect(() => {
+    const token = localStorage.getItem("token");
+    if (!token) return;
+    Axios.get("../backend/admincheck", {
+      headers: {
+        "access-token": token,
+      },
+    })
+      .then((response) => {
+        if (response?.data?.auth) {
+          dispatch(setLoggedIn(true));
+          dispatch(setadmin(response.data.admin));
+        }
+      })
+      .catch(() => {
+        // ignore
+      });
+  }, [dispatch]);
   const enterLoading = (index) => {
     setLoadings((prevLoadings) => {
       const newLoadings = [...prevLoadings];
@@ -110,6 +132,17 @@ function Header(props) {
                 checked={isDarkMode}
                 size={30}
               /> */}
+              {loggedin && (admin === "1" || admin === 1) ? (
+                <Button
+                  icon={<FontAwesomeIcon icon={faCommentDots} />}
+                  onClick={() => {
+                    dispatch(setselectedKey(null));
+                    navigate("/feedback");
+                  }}
+                />
+              ) : (
+                ""
+              )}
               {loggedin && (admin === "1" || admin === 1) ? (
                 <Button
                   href="/dashboard"

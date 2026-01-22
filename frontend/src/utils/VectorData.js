@@ -144,7 +144,7 @@ function VectorData(props) {
 
     const fetchData = async () => {
       try {
-        let baseUrl = `../geoserver/PakDMS/ows?service=WFS&version=1.0.0&request=GetFeature&typeName=PakDMS:${adminUnit}&outputFormat=application/json`;
+        let baseUrl = `../geoserver/ows?service=WFS&version=1.0.0&request=GetFeature&typeName=PakDMS:${adminUnit}&outputFormat=application/json`;
 
         // Build appropriate CQL filter based on hierarchy level
         if (adminUnit === "districts" && selectedUnit) {
@@ -156,7 +156,7 @@ function VectorData(props) {
           selectedDistrict &&
           selectedTehsil
         ) {
-          baseUrl = `../geoserver/PakDMS/ows?service=WFS&version=1.0.0&request=GetFeature&typeName=PakDMS:tehsils&outputFormat=application/json&CQL_FILTER=district='${selectedDistrict}' AND name='${selectedTehsil}'`;
+          baseUrl = `../geoserver/ows?service=WFS&version=1.0.0&request=GetFeature&typeName=PakDMS:tehsils&outputFormat=application/json&CQL_FILTER=district='${selectedDistrict}' AND name='${selectedTehsil}'`;
         }
 
         const response = await Axios.get(baseUrl, {

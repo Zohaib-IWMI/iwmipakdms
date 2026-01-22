@@ -13,6 +13,8 @@ const path = require("path");
 const fs = require("fs");
 const multer = require("multer");
 
+const JWT_SECRET = "iwmipakdmsbylevant";
+
 const app = express();
 const db = mysql.createConnection({
   user: "root",
@@ -20,6 +22,10 @@ const db = mysql.createConnection({
   password: "72342",
   database: "pakdms",
 });
+
+db.query(
+  "CREATE TABLE IF NOT EXISTS feedback (id int NOT NULL AUTO_INCREMENT, name varchar(100) NOT NULL, email varchar(100) NOT NULL, feedback text NOT NULL, word_count int NOT NULL, created_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;"
+);
 
 app.use(express.json());
 app.use(
@@ -52,6 +58,14 @@ const storage = multer.diskStorage({
 });
 
 const upload = multer({ storage });
+
+const countWords = (value) => {
+  if (!value) return 0;
+  return value
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean).length;
+};
 
 // Endpoint to handle file upload
 app.post("/upload", upload.single("file"), (req, res) => {
@@ -92,6 +106,52 @@ const verifyJWT = (req, res, next) => {
       }
     });
   }
+};
+
+const requireJWT = (req, res, next) => {
+  const token = req.headers["access-token"];
+  if (!token) {
+    return res.status(401).json({ auth: false, message: "Token missing" });
+  }
+
+  jwt.verify(token, JWT_SECRET, (err, decoded) => {
+    if (err) {
+      return res
+        .status(401)
+        .json({ auth: false, message: "Invalid or expired token" });
+    }
+    if (!decoded || decoded.id === undefined || decoded.id === null) {
+      return res.status(401).json({ auth: false, message: "Invalid token" });
+    }
+    req.userId = decoded.id;
+    next();
+  });
+};
+
+const requireAdmin = (req, res, next) => {
+  db.execute(
+    "SELECT admin FROM users WHERE id = ? LIMIT 1",
+    [req.userId],
+    (err, result) => {
+      if (err) {
+        return res
+          .status(500)
+          .json({ success: false, message: "Failed to authorize user" });
+      }
+      if (!result || result.length === 0) {
+        return res
+          .status(401)
+          .json({ success: false, message: "User not found" });
+      }
+      const isAdmin = result[0].admin === 1 || result[0].admin === "1";
+      if (!isAdmin) {
+        return res
+          .status(403)
+          .json({ success: false, message: "Admin access required" });
+      }
+      next();
+    }
+  );
 };
 
 app.post("/register", (req, res) => {
@@ -278,7 +338,7 @@ app.post("/login", (req, res) => {
         bcrypt.compare(password, result[0].password, (error, response) => {
           if (response) {
             db.execute(
-              "SELECT admin,admin1,admin1Name,admin2,admin2Name FROM users WHERE username = ?;",
+              "SELECT id, admin,admin1,admin1Name,admin2,admin2Name FROM users WHERE username = ?;",
               [username],
               (err, result) => {
                 if (err) {
@@ -287,7 +347,7 @@ app.post("/login", (req, res) => {
                 if (result.length > 0) {
                   if (response) {
                     const id = result[0].id;
-                    const token = jwt.sign({ id }, "iwmipakdmsbylevant", {
+                    const token = jwt.sign({ id }, JWT_SECRET, {
                       expiresIn: 6000,
                     });
                     res.json({
@@ -327,6 +387,57 @@ app.post("/login", (req, res) => {
       }
     }
   );
+});
+
+app.get("/admincheck", requireJWT, (req, res) => {
+  db.execute(
+    "SELECT admin FROM users WHERE id = ? LIMIT 1",
+    [req.userId],
+    (err, result) => {
+      if (err) {
+        return res.status(500).json({ auth: false, message: "Server error" });
+      }
+      if (!result || result.length === 0) {
+        return res.status(401).json({ auth: false, message: "User not found" });
+      }
+      return res.json({
+        auth: true,
+        admin: result[0].admin,
+      });
+    }
+  );
+});
+
+app.get("/feedbacks", requireJWT, requireAdmin, (req, res) => {
+  const page = Math.max(parseInt(req.query.page || "1", 10), 1);
+  const pageSizeRaw = parseInt(req.query.pageSize || "10", 10);
+  const pageSize = Math.min(Math.max(pageSizeRaw, 1), 100);
+  const offset = (page - 1) * pageSize;
+
+  db.execute("SELECT COUNT(*) AS total FROM feedback", (err, countResult) => {
+    if (err) {
+      return res
+        .status(500)
+        .json({ success: false, message: "Failed to fetch feedback" });
+    }
+    const total = countResult?.[0]?.total || 0;
+    db.execute(
+      "SELECT id, name, email, feedback, word_count, created_at FROM feedback ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+      [pageSize, offset],
+      (err2, result) => {
+        if (err2) {
+          return res
+            .status(500)
+            .json({ success: false, message: "Failed to fetch feedback" });
+        }
+        return res.json({
+          success: true,
+          results: result || [],
+          pagination: { page, pageSize, total },
+        });
+      }
+    );
+  });
 });
 
 app.get("/getAllUsers", (req, res) => {
@@ -465,6 +576,41 @@ app.post("/updateUserDetails", (req, res) => {
 
 app.get("/welcome", verifyJWT, (req, res) => {
   res.status(200).send("Welcome 🙌 ");
+});
+
+app.post("/feedback", (req, res) => {
+  const name = (req.body?.name || "").trim();
+  const email = (req.body?.email || "").trim();
+  const feedback = (req.body?.feedback || "").trim();
+
+  if (!name || !email || !feedback) {
+    return res.status(400).json({
+      success: false,
+      message: "Name, email, and feedback are required.",
+    });
+  }
+
+  const words = countWords(feedback);
+  if (words > 500) {
+    return res.status(400).json({
+      success: false,
+      message: "Feedback must be 500 words or less.",
+    });
+  }
+
+  db.execute(
+    "INSERT INTO feedback (name, email, feedback, word_count) VALUES (?,?,?,?)",
+    [name, email, feedback, words],
+    (err, result) => {
+      if (err) {
+        return res.status(500).json({
+          success: false,
+          message: "Failed to save feedback.",
+        });
+      }
+      return res.json({ success: true, id: result?.insertId });
+    }
+  );
 });
 
 app.use("*", (req, res) => {

@@ -24,3 +24,13 @@ LOCK TABLES `users` WRITE;
 /*!40000 ALTER TABLE users DISABLE KEYS */;
 INSERT INTO `users` VALUES (1,'Demo','User','user@example.com','$2b$10$DZZFOFbs4JOfVrXewwWrP.J8ThGEueCPkgiwGPK5VLSKYurEjFztC',1,1,0,'',0,'','Levant', 'Full Stack Developer'),(2,'Umair','Rabbani','cto@spatial.levantc.com','$2b$10$xHyBP53yDeL4L6ktDQSPq.ugJHV7MQjzS3RmOLJUFbcxQizirEF6C',1,1,0,NULL,0,NULL,'Levant', 'CTO');
 UNLOCK TABLES;
+
+CREATE TABLE IF NOT EXISTS feedback (
+  id int NOT NULL AUTO_INCREMENT,
+  name varchar(100) NOT NULL,
+  email varchar(100) NOT NULL,
+  feedback text NOT NULL,
+  word_count int NOT NULL,
+  created_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
