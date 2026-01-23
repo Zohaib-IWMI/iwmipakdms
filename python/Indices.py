@@ -499,14 +499,17 @@ def getIndice(analysis_startmonth, analysis_endmonth, analysis_startyear, analys
             spi = monthlyMean(spi)
             img_collection = spi.select(indice)
             indiceVis = {
-                'min': -2.0,
-                'max': -0.5,
+                # Use full range for SPI legend and visualization so categories
+                # can cover extreme dry to wet values. Palette maps from
+                # extreme (red) -> no drought (blue).
+                'min': -3.0,
+                'max': 3.0,
                 'palette': [
-                    'FF0000',  # 5: Red
-                    'FFA500',  # 4: Orange
-                    'FFFF00',  # 3: Yellow
-                    '00FFFF',  # 2: Cyan
-                    '0000FF'   # 1: Blue
+                    'FF0000',  # Extreme: Red
+                    'FFA500',  # Severe: Orange
+                    'FFFF00',  # Moderate: Yellow
+                    '00FFFF',  # Mild: Cyan
+                    '0000FF'   # No drought: Blue
                 ]
             }
         case 'SPI_CHIRPS':
@@ -643,8 +646,9 @@ def getIndice(analysis_startmonth, analysis_endmonth, analysis_startyear, analys
             rdi = rdi_collection.map(add_rdi_band)
             img_collection = rdi.select(indice)
             indiceVis = {
-                'min': min_visValue,
-                'max': max_visValue,
+                # Align RDI legend with SPI classification ranges
+                'min': -3.0,
+                'max': 3.0,
                 'palette': [
                     'FF0000',    # Extreme: Red
                     'FFA500',    # Severe: Orange
@@ -920,31 +924,53 @@ def getIndice(analysis_startmonth, analysis_endmonth, analysis_startyear, analys
     if calctype == "map":
         # Build stepped legend metadata for specific drought indices (Option A)
         drought_indices_for_step_legend = [
-            'SPI_ERA5L', 'SPI_CHIRPS', 'MAI', 'PCI', 'SMCI_FLDAS', 'SMCI_SMAP', 'CWD', 'TCI', 'VCI', 'VHI', 'NDVI_Anamoly'
+            'SPI_ERA5L', 'SPI_CHIRPS', 'MAI', 'PCI', 'SMCI_FLDAS', 'SMCI_SMAP', 'CWD', 'TCI', 'VCI', 'VHI', 'NDVI_Anamoly', 'RDI_WAPOR'
         ]
         # Indices where palette goes from high severity to low severity (e.g., Red->Blue),
         # so legend labels should be reversed to match the palette order.
         reversed_label_indices = [
-            'SPI_ERA5L', 'SPI_CHIRPS', 'MAI', 'PCI', 'SMCI_FLDAS', 'SMCI_SMAP', 'TCI', 'VCI', 'VHI', 'NDVI_Anamoly'
+            'SPI_ERA5L', 'SPI_CHIRPS', 'MAI', 'PCI', 'SMCI_FLDAS', 'SMCI_SMAP', 'TCI', 'VCI', 'VHI', 'NDVI_Anamoly', 'RDI_WAPOR'
         ]
         legend = None
         try:
             if indice in drought_indices_for_step_legend:
-                min_val = float(dict['min']) if dict.get('min') is not None else None
-                max_val = float(dict['max']) if dict.get('max') is not None else None
-                if min_val is not None and max_val is not None and max_val >= min_val:
-                    step = (max_val - min_val) / 5.0 if max_val != min_val else 0
-                    breaks = [min_val + step * i for i in range(6)]
+                # Special-case SPI and RDI: use explicit drought-class breaks and
+                # include ranges in labels (display text like "Mild(-0.5 to -1)").
+                if indice in ['SPI_ERA5L', 'RDI_WAPOR']:
+                    # Palette ordering is Extreme -> No drought, so labels
+                    # are provided in that same order (Extreme first). The
+                    # frontend will detect 'Extreme' first label and reverse
+                    # labels/colors for display so they appear No drought -> Extreme.
+                    breaks = [-3.0, -2.0, -1.5, -1.0, -0.5, 3.0]
+                    labels = [
+                        'Extreme (-2 to -3)',
+                        'Severe (-1.5 to -2)',
+                        'Moderate (-1 to -1.5)',
+                        'Mild (-0.5 to -1)',
+                        'No drought (3 to -0.5)'
+                    ]
+                    legend = {
+                        'isDiscrete': True,
+                        'labels': labels,
+                        'colors': dict.get('palette', []),
+                        'breaks': breaks
+                    }
                 else:
-                    breaks = None
-                labels_normal = ['No drought', 'Mild', 'Moderate', 'Severe', 'Extreme']
-                labels = list(reversed(labels_normal)) if indice in reversed_label_indices else labels_normal
-                legend = {
-                    'isDiscrete': True,
-                    'labels': labels,
-                    'colors': dict.get('palette', []),
-                    'breaks': breaks
-                }
+                    min_val = float(dict['min']) if dict.get('min') is not None else None
+                    max_val = float(dict['max']) if dict.get('max') is not None else None
+                    if min_val is not None and max_val is not None and max_val >= min_val:
+                        step = (max_val - min_val) / 5.0 if max_val != min_val else 0
+                        breaks = [min_val + step * i for i in range(6)]
+                    else:
+                        breaks = None
+                    labels_normal = ['No drought', 'Mild', 'Moderate', 'Severe', 'Extreme']
+                    labels = list(reversed(labels_normal)) if indice in reversed_label_indices else labels_normal
+                    legend = {
+                        'isDiscrete': True,
+                        'labels': labels,
+                        'colors': dict.get('palette', []),
+                        'breaks': breaks
+                    }
         except Exception:
             legend = None
 

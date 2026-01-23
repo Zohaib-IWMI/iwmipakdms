@@ -1799,9 +1799,43 @@ function MapWrapper(props) {
                                           ))}
                                         </div>
                                         <div style={{ display: "flex", gap: "10px", justifyContent: "center", marginTop: "6px" }}>
-                                          {L.map((lbl, i) => (
-                                            <span key={i} style={{ fontSize: "13px", fontWeight: "bold", textAlign: "center", minWidth: "60px" }}>{lbl}</span>
-                                          ))}
+                                          {L.map((lbl, i) => {
+                                            const labelText = String(lbl ?? "").trim();
+                                            const match = labelText.match(/\(([^)]*)\)/);
+                                            let title = match
+                                              ? labelText.replace(match[0], "").trim()
+                                              : labelText;
+                                            if (title.toLowerCase() === "no drought") title = "Normal";
+                                            let range = match ? match[0].trim() : "";
+                                            if (range) {
+                                              const inner = range.slice(1, -1);
+                                              const parts = inner.split(/\s+to\s+/i);
+                                              if (parts.length === 2) {
+                                                const left = parts[0].trim();
+                                                const right = parts[1].trim();
+                                                if (left && right) range = `(${right} to ${left})`;
+                                              }
+                                            }
+                                            return (
+                                              <div
+                                                key={i}
+                                                style={{
+                                                  minWidth: "60px",
+                                                  textAlign: "center",
+                                                  display: "flex",
+                                                  flexDirection: "column",
+                                                  alignItems: "center",
+                                                }}
+                                              >
+                                                <div style={{ fontSize: "13px", fontWeight: "bold" }}>{title}</div>
+                                                {range ? (
+                                                  <div style={{ fontSize: "11px", marginTop: "4px", whiteSpace: "nowrap" }}>
+                                                    {range}
+                                                  </div>
+                                                ) : null}
+                                              </div>
+                                            );
+                                          })}
                                         </div>
                                       </div>
                                     );
@@ -1890,9 +1924,43 @@ function MapWrapper(props) {
                                           ))}
                                         </div>
                                         <div style={{ display: "flex", gap: "10px", justifyContent: "center", marginTop: "6px" }}>
-                                          {L.map((lbl, i) => (
-                                            <span key={i} style={{ fontSize: "13px", fontWeight: "bold", textAlign: "center", minWidth: "60px" }}>{lbl}</span>
-                                          ))}
+                                          {L.map((lbl, i) => {
+                                            const labelText = String(lbl ?? "").trim();
+                                            const match = labelText.match(/\(([^)]*)\)/);
+                                            let title = match
+                                              ? labelText.replace(match[0], "").trim()
+                                              : labelText;
+                                            if (title.toLowerCase() === "no drought") title = "Normal";
+                                            let range = match ? match[0].trim() : "";
+                                            if (range) {
+                                              const inner = range.slice(1, -1);
+                                              const parts = inner.split(/\s+to\s+/i);
+                                              if (parts.length === 2) {
+                                                const left = parts[0].trim();
+                                                const right = parts[1].trim();
+                                                if (left && right) range = `(${right} to ${left})`;
+                                              }
+                                            }
+                                            return (
+                                              <div
+                                                key={i}
+                                                style={{
+                                                  minWidth: "60px",
+                                                  textAlign: "center",
+                                                  display: "flex",
+                                                  flexDirection: "column",
+                                                  alignItems: "center",
+                                                }}
+                                              >
+                                                <div style={{ fontSize: "13px", fontWeight: "bold" }}>{title}</div>
+                                                {range ? (
+                                                  <div style={{ fontSize: "11px", marginTop: "4px", whiteSpace: "nowrap" }}>
+                                                    {range}
+                                                  </div>
+                                                ) : null}
+                                              </div>
+                                            );
+                                          })}
                                         </div>
                                       </div>
                                     );
