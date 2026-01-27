@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Turf.js Old Version Test</title>
+</head>
+<body>
+  <h2>Testing turf.js (callback style)</h2>
+
+  <script src="js/turf.min.js"></script>
+  <script>
+    var pt = turf.point([74.3, 31.5]); // near Lahore
+    var poly = turf.polygon([[
+      [74.0, 31.0],
+      [75.0, 31.0],
+      [75.0, 32.0],
+      [74.0, 32.0],
+      [74.0, 31.0]
+    ]]);
+
+    turf.inside(pt, poly, function(err, isInside) {
+      if (err) {
+        console.error("Error:", err);
+        return;
+      }
+      console.log("Point inside polygon? ->", isInside);
+      document.body.innerHTML += "<p>Point inside polygon? <b>" + isInside + "</b></p>";
+    });
+  </script>
+</body>
+</html>

@@ -11,6 +11,7 @@ import TermsConditons from "./pages/Dashboard/TermsConditions";
 import ContactUs from "./pages/Dashboard/ContactUs";
 import Dashboard from "./pages/Dashboard/Dashboard";
 import MapWrapper from "./pages/Map/Map";
+import Forecast from "./pages/Forecast/Forecast";
 import Home from "./pages/Dashboard/Home";
 import FeedbackPage from "./pages/Dashboard/Feedback";
 
@@ -33,6 +34,10 @@ function App() {
             element={
               <MapWrapper heading="Pakistan Drought Managament System" />
             }
+          />
+          <Route
+            path="forecast"
+            element={<Forecast heading="Pakistan Drought Managament System" />}
           />
           <Route
             path="contactus"

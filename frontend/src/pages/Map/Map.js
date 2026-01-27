@@ -50,6 +50,7 @@ import {
   setSelectedTwo,
   setselectedKey,
   setSelectedWapor,
+  setmodule,
   setshowTour,
 } from "../../slices/mapView.js";
 
@@ -975,10 +976,22 @@ function MapWrapper(props) {
                     placeholder="Select a module"
                     optionFilterProp="children"
                     value={module}
+                    onChange={(value) => {
+                      dispatch(setmodule(value));
+                      if (value === "forecast") {
+                        navigate("/forecast");
+                      } else {
+                        navigate("/map");
+                      }
+                    }}
                     options={[
                       {
                         value: "monitoring",
                         label: "Drought Monitoring",
+                      },
+                      {
+                        value: "forecast",
+                        label: "Forecast",
                       },
                     ]}
                   />

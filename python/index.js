@@ -19,6 +19,7 @@ const activeDataProcesses = new Map();
 
 app.post("/getboundary", (req, res) => {
   const args = ["--unit", req.body.params.unit];
+  console.log('/getboundary called', { unit: req.body.params.unit });
 
   const pythonProcess = spawn("python", ["jrc_basemap.py", ...args]);
 
@@ -34,6 +35,7 @@ app.post("/getboundary", (req, res) => {
   });
 
   pythonProcess.on("close", (code) => {
+    console.log(`/getboundary python process closed code=${code} stdout_len=${d.length} stderr_len=${e.length}`);
     // Filter out survey-related errors from Google Earth Engine
     let filteredError = e;
     if (e) {
@@ -60,6 +62,7 @@ app.post("/getboundary", (req, res) => {
 
 app.post("/getlulc", (req, res) => {
   const args = ["--unit", req.body.params.unit];
+  console.log('/getlulc called', { unit: req.body.params.unit });
 
   const pythonProcess = spawn("python", ["sentinellulc.py", ...args]);
 
@@ -75,6 +78,7 @@ app.post("/getlulc", (req, res) => {
   });
 
   pythonProcess.on("close", (code) => {
+    console.log(`/getlulc python process closed code=${code} stdout_len=${d.length} stderr_len=${e.length}`);
     // Filter out survey-related errors from Google Earth Engine
     let filteredError = e;
     if (e) {
@@ -142,6 +146,7 @@ app.post("/getdata", (req, res) => {
   // Store the process with a unique ID
   const requestId = Date.now().toString();
   activeDataProcesses.set(requestId, pythonProcess);
+  console.log('/getdata called', { requestId, unit: req.body.params.unit, startyear: req.body.params.startyear, endyear: req.body.params.endyear });
 
   // Set the request ID in the response header
   res.set("Request-ID", requestId);
@@ -158,6 +163,7 @@ app.post("/getdata", (req, res) => {
   });
 
   pythonProcess.on("close", (code) => {
+    console.log(`/getdata python process closed requestId=${requestId} code=${code} stdout_len=${d.length} stderr_len=${e.length}`);
     // Remove process from active processes when done
     activeDataProcesses.delete(requestId);
 
@@ -226,7 +232,6 @@ app.post("/cancelDataRequest", (req, res) => {
 });
 
 const PORT = process.env.PYTHON_DOCKER_PORT || 8082;
-
 app.listen(PORT, () => {
-  // Server started
+  console.log(`Python backend listening on port ${PORT}`);
 });

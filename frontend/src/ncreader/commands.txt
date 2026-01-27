@@ -1,0 +1,8 @@
+nccopy -h
+
+
+cd C:\xampp8\htdocs\ncreader\nc_files
+
+
+--convert nc4 to 03 version
+nccopy -k classic GEFS.SPI.24M.nc GEFS.SPI.24M_classic.nc
