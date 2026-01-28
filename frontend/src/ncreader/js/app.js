@@ -1,1 +1,0 @@
-console.log(typeof netcdfjs); // should log "function"

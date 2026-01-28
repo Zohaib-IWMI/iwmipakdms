@@ -214,10 +214,12 @@ function MapWrapper(props) {
   const [layerLegend, setLayerLegend] = useState(null);
   const [layerLegendTwo, setLayerLegendTwo] = useState(null);
   const [tehsils, setTehsils] = useState([]);
+  const [tehsilsLoading, setTehsilsLoading] = useState(false);
   const [calcval, setcalcval] = useState("mean");
   const [startmonth, setstartmonth] = useState(1);
   const [endmonth, setendmonth] = useState(12);
   const [districts, setDistricts] = useState([]);
+  const [districtsLoading, setDistrictsLoading] = useState(false);
   const [selectedUnit, setselectedUnit] = useState(null);
   const [selectedDistrict, setselectedDistrict] = useState(null);
   const [selectedTehsil, setselectedTehsil] = useState(null);
@@ -1028,7 +1030,33 @@ function MapWrapper(props) {
                           setshowOpacity(false);
                           setselectedUnit(e);
                           setselectedDistrict(null);
+                          setselectedTehsil(null);
+                          setDistricts([]);
+                          setTehsils([]);
                           setUnit("districts");
+
+                          // fetch districts for the selected province and populate dropdown
+                          setDistrictsLoading(true);
+                          Axios.get("../geoserver/ows", {
+                            params: {
+                              service: "WFS",
+                              version: "1.0.0",
+                              request: "GetFeature",
+                              typeName: "PakDMS:districts",
+                              outputFormat: "application/json",
+                              CQL_FILTER: `unit='${e}'`,
+                            },
+                          })
+                            .then((resp) => {
+                              const feats = resp?.data?.features || [];
+                              getdistricts(feats);
+                            })
+                            .catch(() => {
+                              setDistricts([]);
+                            })
+                            .finally(() => {
+                              setDistrictsLoading(false);
+                            });
                         }}
                         value={admin1 ? admin1Name : selectedUnit}
                         options={[
@@ -1073,7 +1101,7 @@ function MapWrapper(props) {
                           },
                         ]}
                       />
-                      {districts.length > 0 || (admin1 && admin2) ? (
+                      {selectedUnit || (admin1 && admin2) ? (
                         <>
                           <Select
                             placeholder="Select a district"
@@ -1082,17 +1110,43 @@ function MapWrapper(props) {
                               setloadlayer(false);
                               setshowOpacity(false);
                               setselectedDistrict(e);
+                              setselectedTehsil(null);
+                              setTehsils([]);
                               setUnit("tehsils");
+
+                              // fetch tehsils for the selected district
+                              setTehsilsLoading(true);
+                              Axios.get("../geoserver/ows", {
+                                params: {
+                                  service: "WFS",
+                                  version: "1.0.0",
+                                  request: "GetFeature",
+                                  typeName: "PakDMS:tehsils",
+                                  outputFormat: "application/json",
+                                  CQL_FILTER: `district='${e}'`,
+                                },
+                              })
+                                .then((resp) => {
+                                  const feats = resp?.data?.features || [];
+                                  gettehsils(feats);
+                                })
+                                .catch(() => {
+                                  setTehsils([]);
+                                })
+                                .finally(() => {
+                                  setTehsilsLoading(false);
+                                });
                             }}
                             disabled={admin2 ? true : false}
                             value={admin2 ? admin2Name : selectedDistrict}
+                            loading={districtsLoading}
                             options={districts}
                           />
                         </>
                       ) : (
                         ""
                       )}
-                      {tehsils.length > 0 ? (
+                      {selectedDistrict ? (
                         <>
                           <Select
                             placeholder="Select a tehsil"
@@ -1104,6 +1158,7 @@ function MapWrapper(props) {
                               setUnit("subtehsil");
                             }}
                             value={selectedTehsil}
+                            loading={tehsilsLoading}
                             options={tehsils}
                           />
                         </>
@@ -1553,7 +1608,12 @@ function MapWrapper(props) {
                     }}
                   />
                 </Control>
-                <AddMask />
+                <AddMask
+                  selectedUnit={selectedUnit}
+                  selectedDistrict={selectedDistrict}
+                  selectedTehsil={selectedTehsil}
+                  unit={unit}
+                />
                 {legendLULC ? (
                   <Control prepend position="bottomleft">
                     <LULCLegend legendLULC={(e) => setlegendLULC(e)} />

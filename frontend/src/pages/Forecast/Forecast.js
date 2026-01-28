@@ -36,6 +36,7 @@ import { useNavigate } from "react-router-dom";
 import dayjs from "dayjs";
 import L from "leaflet";
 import NetCDFReader from "netcdfjs";
+import Axios from "axios";
 
 import HeaderMap from "../../components/HeaderMap";
 import { setmodule } from "../../slices/mapView";
@@ -182,29 +183,27 @@ const LEGENDS = {
   },
 };
 
-function LegendBox({ indexKey }) {
+function LegendBox({ indexKey, darkmode }) {
   const cfg = LEGENDS[indexKey];
   if (!cfg) return null;
   return (
     <div
       style={{
-        background: "#ffffff",
-        color: "#000",
-        padding: "14px 16px",
-        borderRadius: 10,
-        border: "2px solid #111",
-        boxShadow: "0 6px 16px rgba(0,0,0,0.25)",
-        minWidth: 520,
-        maxWidth: 720,
+        width: "auto",
+        background: darkmode ? "black" : "white",
+        borderRadius: "5px",
+        padding: "5px",
+        color: darkmode ? "white" : "black",
+        textAlign: "center",
       }}
     >
       <div
         style={{
           textAlign: "center",
           fontWeight: 800,
-          fontSize: 18,
+          fontSize: 16,
           lineHeight: 1.2,
-          marginBottom: 12,
+          marginBottom: 6,
         }}
       >
         {cfg.title}
@@ -212,30 +211,58 @@ function LegendBox({ indexKey }) {
       <div
         style={{
           display: "flex",
-          gap: 16,
-          justifyContent: "space-between",
-          alignItems: "flex-start",
+          flexDirection: "column",
+          alignItems: "center",
+          width: "100%",
         }}
       >
-        {cfg.stops.map((stop) => (
-          <div key={stop.label} style={{ textAlign: "center", flex: 1 }}>
+        <div style={{ display: "flex", gap: "10px" }}>
+          {cfg.stops.map((stop) => (
             <div
+              key={stop.label}
               style={{
-                height: 14,
-                borderRadius: 9999,
-                background: stop.color,
-                marginBottom: 10,
-                boxShadow: "inset 0 0 0 1px rgba(0,0,0,0.25)",
+                width: "60px",
+                height: "10px",
+                borderRadius: "5px",
+                backgroundColor: stop.color,
               }}
             />
-            <div style={{ fontWeight: 800, fontSize: 14, lineHeight: 1.1 }}>
-              {stop.label}
+          ))}
+        </div>
+        <div
+          style={{
+            display: "flex",
+            gap: "10px",
+            justifyContent: "center",
+            marginTop: "6px",
+          }}
+        >
+          {cfg.stops.map((stop) => (
+            <div
+              key={stop.label}
+              style={{
+                minWidth: "60px",
+                textAlign: "center",
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+              }}
+            >
+              <div style={{ fontSize: "13px", fontWeight: "bold" }}>
+                {stop.label}
+              </div>
+              <div
+                style={{
+                  fontSize: "11px",
+                  marginTop: "4px",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {stop.range}
+              </div>
             </div>
-            <div style={{ fontSize: 12, lineHeight: 1.1, marginTop: 2 }}>
-              {stop.range}
-            </div>
-          </div>
-        ))}
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -250,6 +277,53 @@ const legendStops = [
   { value: 2, color: "#0000FF" },
   { value: 3, color: "#00008B" },
 ];
+
+const MONTH_WINDOW_OPTIONS = [
+  { value: 1, label: "Month 1" },
+  { value: 2, label: "Month 2" },
+  { value: 3, label: "Month 3" },
+  { value: 6, label: "Month 6" },
+  { value: 12, label: "Month 12" },
+  { value: 24, label: "Month 24" },
+];
+
+function classifyLegendBucket(indexKey, value) {
+  if (!Number.isFinite(value)) return null;
+
+  if (indexKey === "SPI") {
+    if (value >= -0.5) return "Normal";
+    if (value >= -1) return "Mild";
+    if (value >= -1.5) return "Moderate";
+    if (value >= -2) return "Severe";
+    return "Extreme";
+  }
+
+  if (indexKey === "NSPI") {
+    if (value < 0.5) return "Normal";
+    if (value < 0.6) return "Mild";
+    if (value < 0.7) return "Moderate";
+    if (value < 0.8) return "High";
+    return "Severe";
+  }
+
+  if (indexKey === "ALERT") {
+    const k = Math.round(value);
+    if (k <= 0) return "Normal";
+    if (k === 1) return "Watch";
+    if (k === 2) return "Alert";
+    if (k === 3) return "Warning";
+    return "Emergency";
+  }
+
+  return null;
+}
+
+function getLegendBuckets(indexKey) {
+  if (indexKey === "SPI") return ["Normal", "Mild", "Moderate", "Severe", "Extreme"];
+  if (indexKey === "NSPI") return ["Normal", "Mild", "Moderate", "High", "Severe"];
+  if (indexKey === "ALERT") return ["Normal", "Watch", "Alert", "Warning", "Emergency"];
+  return [];
+}
 
 function hexToRgb(hex) {
   const clean = hex.replace("#", "");
@@ -354,6 +428,60 @@ const drawPakistanMask = (
 
   ctx.fill("evenodd");
   ctx.restore();
+};
+
+const buildGeojsonMaskAlpha = (
+  width,
+  height,
+  lonMin,
+  lonMax,
+  latMin,
+  latMax,
+  geojson
+) => {
+  const maskCanvas = document.createElement("canvas");
+  maskCanvas.width = width;
+  maskCanvas.height = height;
+  const mctx = maskCanvas.getContext("2d");
+  mctx.clearRect(0, 0, width, height);
+  mctx.fillStyle = "rgba(0,0,0,1)";
+  mctx.beginPath();
+
+  const drawRing = (ring) => {
+    ring.forEach((coord, idx) => {
+      const [lon, lat] = coord;
+      const x = ((lon - lonMin) / (lonMax - lonMin)) * (width - 1);
+      const y = ((latMax - lat) / (latMax - latMin)) * (height - 1);
+      if (idx === 0) {
+        mctx.moveTo(x, y);
+      } else {
+        mctx.lineTo(x, y);
+      }
+    });
+    mctx.closePath();
+  };
+
+  const drawPolygon = (polygon) => {
+    polygon.forEach((ring) => drawRing(ring));
+  };
+
+  (geojson?.features || []).forEach((feature) => {
+    const geometry = feature?.geometry;
+    if (!geometry) return;
+    if (geometry.type === "Polygon") {
+      drawPolygon(geometry.coordinates);
+    } else if (geometry.type === "MultiPolygon") {
+      geometry.coordinates.forEach((polygon) => drawPolygon(polygon));
+    }
+  });
+
+  mctx.fill("evenodd");
+  const data = mctx.getImageData(0, 0, width, height).data;
+  const alpha = new Uint8ClampedArray(width * height);
+  for (let i = 0; i < width * height; i += 1) {
+    alpha[i] = data[i * 4 + 3];
+  }
+  return alpha;
 };
 
 function NcRasterLayer({ raster }) {
@@ -501,21 +629,58 @@ function Forecast() {
 
   const [collapsed, setCollapsed] = useState(false);
   const [boundarySelect, setBoundarySelect] = useState(0);
+  const [districts, setDistricts] = useState([]);
+  const [tehsils, setTehsils] = useState([]);
+  const [districtsLoading, setDistrictsLoading] = useState(false);
+  const [tehsilsLoading, setTehsilsLoading] = useState(false);
+  const [selectedUnit, setSelectedUnit] = useState(null);
+  const [selectedDistrict, setSelectedDistrict] = useState(null);
+  const [selectedTehsil, setSelectedTehsil] = useState(null);
   const [indicesExpanded, setIndicesExpanded] = useState(true);
   const [selectedIndex, setSelectedIndex] = useState("SPI");
   const [selectedFile, setSelectedFile] = useState(null);
   const [timeOptions, setTimeOptions] = useState([]);
   const [selectedTime, setSelectedTime] = useState(0);
+  const [selectedMonthWindow, setSelectedMonthWindow] = useState(1);
   const [opacity, setOpacity] = useState(0.85);
   const [loading, setLoading] = useState(false);
   const [renderLoading, setRenderLoading] = useState(false);
   const [renderProgress, setRenderProgress] = useState(0);
   const [raster, setRaster] = useState(null);
   const [pakistanGeojsonData, setPakistanGeojsonData] = useState(null);
+  const [clipGeojsonData, setClipGeojsonData] = useState(null);
+  const [coverageStats, setCoverageStats] = useState(null);
+  const [statsOpen, setStatsOpen] = useState(false);
 
   const ncMetaRef = useRef(null);
   const renderProgressRef = useRef(0);
   const renderProgressRafRef = useRef(null);
+
+  const getdistricts = (features) => {
+    let temp = [];
+    (features || []).forEach((feat) => {
+      temp.push({ value: feat.properties.name, label: feat.properties.name });
+    });
+    temp.sort(function (a, b) {
+      if (a.value < b.value) return -1;
+      if (a.value > b.value) return 1;
+      return 0;
+    });
+    setDistricts(temp);
+  };
+
+  const gettehsils = (features) => {
+    let temp = [];
+    (features || []).forEach((feat) => {
+      temp.push({ value: feat.properties.name, label: feat.properties.name });
+    });
+    temp.sort(function (a, b) {
+      if (a.value < b.value) return -1;
+      if (a.value > b.value) return 1;
+      return 0;
+    });
+    setTehsils(temp);
+  };
 
   const fileOptions = useMemo(() => {
     return classicOptionsByIndex[selectedIndex] || [];
@@ -576,6 +741,90 @@ function Forecast() {
       setSelectedFile(null);
     }
   }, [selectedIndex, fileOptions, selectedFile, alertFileOption]);
+
+  useEffect(() => {
+    if (selectedIndex !== "SPI") return;
+    if (!selectedMonthWindow) return;
+
+    const desired = Number(selectedMonthWindow);
+    const match = (fileOptions || []).find((o) => Number(o?.meta?.month) === desired);
+    if (match?.value) {
+      setSelectedFile(match.value);
+      return;
+    }
+
+    // If the desired month file isn't available, keep the current selection.
+    // We'll surface a gentle hint once to the user.
+    api.warning({
+      message: "Month not available",
+      description: `No SPI file found for ${desired} month(s).`,
+      placement: "bottomRight",
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedIndex, selectedMonthWindow, fileOptions]);
+
+  useEffect(() => {
+    if (selectedIndex === "SPI") return;
+    const desired = Math.max(1, Number(selectedMonthWindow) || 1);
+    const idx = desired - 1;
+    if (timeOptions.length > 0) {
+      setSelectedTime(Math.max(0, Math.min(idx, timeOptions.length - 1)));
+    } else {
+      setSelectedTime(0);
+    }
+  }, [selectedIndex, selectedMonthWindow, timeOptions.length]);
+
+  useEffect(() => {
+    const hasSelection = !!(selectedTehsil || selectedDistrict || selectedUnit);
+    if (!hasSelection) {
+      setClipGeojsonData(null);
+      return;
+    }
+
+    const fetchClip = async () => {
+      try {
+        let typeName = "PakDMS:units";
+        let CQL_FILTER = null;
+
+        if (selectedTehsil) {
+          typeName = "PakDMS:tehsils";
+          if (selectedDistrict) {
+            CQL_FILTER = `district='${selectedDistrict}' AND name='${selectedTehsil}'`;
+          } else {
+            CQL_FILTER = `name='${selectedTehsil}'`;
+          }
+        } else if (selectedDistrict) {
+          typeName = "PakDMS:districts";
+          CQL_FILTER = `name='${selectedDistrict}'`;
+        } else if (selectedUnit) {
+          typeName = "PakDMS:units";
+          CQL_FILTER = `name='${selectedUnit}'`;
+        }
+
+        const resp = await Axios.get("../geoserver/ows", {
+          params: {
+            service: "WFS",
+            version: "1.0.0",
+            request: "GetFeature",
+            typeName,
+            outputFormat: "application/json",
+            ...(CQL_FILTER ? { CQL_FILTER } : {}),
+          },
+        });
+
+        const fc = resp?.data;
+        if (fc && Array.isArray(fc.features) && fc.features.length > 0) {
+          setClipGeojsonData(fc);
+        } else {
+          setClipGeojsonData(null);
+        }
+      } catch (e) {
+        setClipGeojsonData(null);
+      }
+    };
+
+    fetchClip();
+  }, [selectedUnit, selectedDistrict, selectedTehsil]);
 
   useEffect(() => {
     if (!selectedFile) return;
@@ -766,6 +1015,8 @@ function Forecast() {
 
     setRenderLoading(true);
     setRenderProgress(0);
+    setCoverageStats(null);
+    setStatsOpen(false);
 
     const {
       dataVar,
@@ -819,6 +1070,21 @@ function Forecast() {
     const ctx = canvas.getContext("2d");
     const imageData = ctx.createImageData(lonLength, latLength);
 
+    const lonMin = Math.min(...lonData);
+    const lonMax = Math.max(...lonData);
+    const latMin = Math.min(...latData);
+    const latMax = Math.max(...latData);
+    const clipGeojson = clipGeojsonData || pakistanGeojsonData;
+    const clipAlpha = buildGeojsonMaskAlpha(
+      lonLength,
+      latLength,
+      lonMin,
+      lonMax,
+      latMin,
+      latMax,
+      clipGeojson
+    );
+
     const scaleFactorRaw = getAttribute(dataVar, "scale_factor");
     const addOffsetRaw = getAttribute(dataVar, "add_offset");
     const scaleFactor = Number.isFinite(Number(scaleFactorRaw))
@@ -850,6 +1116,15 @@ function Forecast() {
     let min = Number.POSITIVE_INFINITY;
     let max = Number.NEGATIVE_INFINITY;
 
+    const buckets = getLegendBuckets(selectedIndex);
+    const bucketCounts = buckets.reduce((acc, k) => {
+      acc[k] = 0;
+      return acc;
+    }, {});
+    let noDataCount = 0;
+    let totalInside = 0;
+    let totalValid = 0;
+
     const progressStep = Math.max(1, Math.floor(latLength / 50));
     const updateProgress = (value) => {
       renderProgressRef.current = value;
@@ -870,6 +1145,8 @@ function Forecast() {
     for (let y = 0; y < latLength; y += 1) {
       const latIndex = latAscending ? latLength - 1 - y : y;
       for (let x = 0; x < lonLength; x += 1) {
+        const pix = y * lonLength + x;
+        const inside = clipAlpha[pix] > 0;
         const lonIndex = lonAscending ? x : lonLength - 1 - x;
 
         const indices = new Array(dims.length).fill(0);
@@ -903,6 +1180,16 @@ function Forecast() {
         }
 
         const index = (y * lonLength + x) * 4;
+        if (!inside) {
+          imageData.data[index] = 0;
+          imageData.data[index + 1] = 0;
+          imageData.data[index + 2] = 0;
+          imageData.data[index + 3] = 0;
+          continue;
+        }
+
+        totalInside += 1;
+
         if (isValid) {
           const cfg = LEGENDS[selectedIndex];
           const colorHex = cfg?.getColor ? cfg.getColor(scaledValue) : null;
@@ -911,11 +1198,18 @@ function Forecast() {
           imageData.data[index + 1] = g;
           imageData.data[index + 2] = b;
           imageData.data[index + 3] = Math.round(opacity * 255);
+
+          totalValid += 1;
+          const bucket = classifyLegendBucket(selectedIndex, scaledValue);
+          if (bucket && bucketCounts[bucket] !== undefined) {
+            bucketCounts[bucket] += 1;
+          }
         } else {
           imageData.data[index] = 0;
           imageData.data[index + 1] = 0;
           imageData.data[index + 2] = 0;
           imageData.data[index + 3] = 0;
+          noDataCount += 1;
         }
       }
 
@@ -926,21 +1220,8 @@ function Forecast() {
 
     ctx.putImageData(imageData, 0, 0);
 
-    const lonMin = Math.min(...lonData);
-    const lonMax = Math.max(...lonData);
-    const latMin = Math.min(...latData);
-    const latMax = Math.max(...latData);
-
-    drawPakistanMask(
-      ctx,
-      lonLength,
-      latLength,
-      lonMin,
-      lonMax,
-      latMin,
-      latMax,
-      pakistanGeojsonData
-    );
+    // Apply an anti-aliased clip mask for cleaner edges
+    drawPakistanMask(ctx, lonLength, latLength, lonMin, lonMax, latMin, latMax, clipGeojson);
 
     const bounds = [
       [latMin, lonMin],
@@ -956,6 +1237,24 @@ function Forecast() {
         max: Number.isFinite(max) ? max : null,
         units: dataUnits || "",
       },
+    });
+
+    const coverageItems = buckets.map((label) => {
+      const count = Number(bucketCounts[label] || 0);
+      const pct = totalInside > 0 ? (count / totalInside) * 100 : 0;
+      return { label, count, pct };
+    });
+    if (noDataCount > 0) {
+      coverageItems.push({
+        label: "No data",
+        count: noDataCount,
+        pct: totalInside > 0 ? (noDataCount / totalInside) * 100 : 0,
+      });
+    }
+    setCoverageStats({
+      totalInside,
+      totalValid,
+      items: coverageItems,
     });
 
     updateProgress(100);
@@ -1024,6 +1323,125 @@ function Forecast() {
                     <Radio value={2}>Draw</Radio>
                   </Space>
                 </Radio.Group>
+              </div>
+
+              <div>
+                <p className="sidebar-module">
+                  <FontAwesomeIcon icon={faLayerGroup} />
+                  &nbsp;&nbsp;&nbsp;&nbsp;Region
+                </p>
+
+                <Select
+                  allowClear
+                  showSearch
+                  placeholder="Select a province"
+                  optionFilterProp="label"
+                  value={selectedUnit}
+                  onChange={(value) => {
+                    setSelectedUnit(value || null);
+                    setSelectedDistrict(null);
+                    setSelectedTehsil(null);
+                    setDistricts([]);
+                    setTehsils([]);
+
+                    if (!value) return;
+                    setDistrictsLoading(true);
+                    Axios.get("../geoserver/ows", {
+                      params: {
+                        service: "WFS",
+                        version: "1.0.0",
+                        request: "GetFeature",
+                        typeName: "PakDMS:districts",
+                        outputFormat: "application/json",
+                        CQL_FILTER: `unit='${value}'`,
+                      },
+                    })
+                      .then((resp) => {
+                        const feats = resp?.data?.features || [];
+                        getdistricts(feats);
+                      })
+                      .catch(() => {
+                        setDistricts([]);
+                      })
+                      .finally(() => {
+                        setDistrictsLoading(false);
+                      });
+                  }}
+                  options={[
+                    { value: "AZAD KASHMIR", label: "AZAD KASHMIR" },
+                    { value: "BALOCHISTAN", label: "BALOCHISTAN" },
+                    { value: "GILGIT BALTISTAN", label: "GILGIT BALTISTAN" },
+                    {
+                      value: "FEDERAL CAPITAL TERRITORY",
+                      label: "FEDERAL CAPITAL TERRITORY",
+                    },
+                    {
+                      value: "KHYBER PAKHTUNKHWA",
+                      label: "KHYBER PAKHTUNKHWA",
+                    },
+                    { value: "PUNJAB", label: "PUNJAB" },
+                    { value: "SINDH", label: "SINDH" },
+                  ]}
+                />
+
+                {selectedUnit ? (
+                  <div style={{ marginTop: 10 }}>
+                    <Select
+                      allowClear
+                      showSearch
+                      placeholder="Select a district"
+                      optionFilterProp="label"
+                      loading={districtsLoading}
+                      value={selectedDistrict}
+                      options={districts}
+                      onChange={(value) => {
+                        setSelectedDistrict(value || null);
+                        setSelectedTehsil(null);
+                        setTehsils([]);
+
+                        if (!value) return;
+                        setTehsilsLoading(true);
+                        Axios.get("../geoserver/ows", {
+                          params: {
+                            service: "WFS",
+                            version: "1.0.0",
+                            request: "GetFeature",
+                            typeName: "PakDMS:tehsils",
+                            outputFormat: "application/json",
+                            CQL_FILTER: `district='${value}'`,
+                          },
+                        })
+                          .then((resp) => {
+                            const feats = resp?.data?.features || [];
+                            gettehsils(feats);
+                          })
+                          .catch(() => {
+                            setTehsils([]);
+                          })
+                          .finally(() => {
+                            setTehsilsLoading(false);
+                          });
+                      }}
+                    />
+                  </div>
+                ) : null}
+
+                {selectedDistrict ? (
+                  <div style={{ marginTop: 10 }}>
+                    <Select
+                      allowClear
+                      showSearch
+                      placeholder="Select a tehsil"
+                      optionFilterProp="label"
+                      loading={tehsilsLoading}
+                      value={selectedTehsil}
+                      options={tehsils}
+                      onChange={(value) => {
+                        setSelectedTehsil(value || null);
+                      }}
+                    />
+                  </div>
+                ) : null}
               </div>
               <div>
                 <div
@@ -1120,22 +1538,21 @@ function Forecast() {
                     </div>
                     <Select
                       placeholder="Select Month"
-                      value={selectedFile}
-                      onChange={(value) => setSelectedFile(value)}
-                      options={fileOptions}
+                      value={selectedMonthWindow}
+                      onChange={(value) => setSelectedMonthWindow(value)}
+                      options={MONTH_WINDOW_OPTIONS}
                     />
                   </>
                 ) : (
                   <>
                     <div style={{ textAlign: "left", fontSize: 12, marginBottom: 6 }}>
-                      Time
+                      Month
                     </div>
                     <Select
-                      placeholder="Select Time"
-                      value={selectedTime}
-                      onChange={(value) => setSelectedTime(value)}
-                      options={timeOptions}
-                      disabled={timeOptions.length === 0}
+                      placeholder="Select Month"
+                      value={selectedMonthWindow}
+                      onChange={(value) => setSelectedMonthWindow(value)}
+                      options={MONTH_WINDOW_OPTIONS}
                     />
                   </>
                 )}
@@ -1150,17 +1567,28 @@ function Forecast() {
                   onChange={(value) => setOpacity(value)}
                 />
               </div>
-              <Button
-                icon={<FontAwesomeIcon icon={faLayerGroup} />}
-                onClick={buildRaster}
-                disabled={
-                  !selectedFile ||
-                  ((selectedIndex === "ALERT" || selectedIndex === "NSPI") &&
-                    timeOptions.length === 0)
-                }
-              >
-                Apply
-              </Button>
+              <Space>
+                <Button
+                  icon={<FontAwesomeIcon icon={faLayerGroup} />}
+                  onClick={buildRaster}
+                  disabled={
+                    !selectedFile ||
+                    ((selectedIndex === "ALERT" || selectedIndex === "NSPI") &&
+                      timeOptions.length === 0)
+                  }
+                >
+                  Apply
+                </Button>
+                <Button
+                  disabled={!coverageStats}
+                  onClick={() => {
+                    if (!coverageStats) return;
+                    setStatsOpen((v) => !v);
+                  }}
+                >
+                  Stats
+                </Button>
+              </Space>
             </Space>
           </Sider>
           <Content style={contentStyle}>
@@ -1203,7 +1631,11 @@ function Forecast() {
                 className="map-container"
                 maxZoom={27}
               >
-              <AddMask />
+              <AddMask
+                selectedUnit={selectedUnit}
+                selectedDistrict={selectedDistrict}
+                selectedTehsil={selectedTehsil}
+              />
               <NcValueOnClick ncMetaRef={ncMetaRef} selectedTime={selectedTime} />
               <LayersControl position="topleft">
                 <LayersControl.BaseLayer
@@ -1272,13 +1704,60 @@ function Forecast() {
               {raster ? (
                 <div
                   style={{
-                    position: "absolute",
-                    left: 10,
-                    bottom: 10,
-                    zIndex: 1000,
+                    width: "auto",
+                    position: "fixed",
+                    bottom: "15px",
+                    right: "15px",
+                    zIndex: 5000,
                   }}
                 >
-                  <LegendBox indexKey={selectedIndex} />
+                  <LegendBox indexKey={selectedIndex} darkmode={darkmode} />
+                </div>
+              ) : null}
+
+              {raster && coverageStats && statsOpen ? (
+                <div
+                  style={{
+                    position: "fixed",
+                    right: "15px",
+                    top: "120px",
+                    zIndex: 5000,
+                    width: 280,
+                    background: darkmode ? "black" : "white",
+                    color: darkmode ? "white" : "black",
+                    borderRadius: "8px",
+                    padding: "10px 12px",
+                    boxShadow: "0 6px 16px rgba(0,0,0,0.25)",
+                    border: darkmode ? "1px solid #333" : "1px solid #ddd",
+                  }}
+                >
+                  <div style={{ fontWeight: 800, marginBottom: 8 }}>
+                    Stats
+                  </div>
+                  <div style={{ fontSize: 12, marginBottom: 10, opacity: 0.9 }}>
+                    Total inside clip: <b>{coverageStats.totalInside}</b>
+                    <br />
+                    Valid pixels: <b>{coverageStats.totalValid}</b>
+                  </div>
+                  <div>
+                    {coverageStats.items.map((row) => (
+                      <div
+                        key={row.label}
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          gap: 10,
+                          marginBottom: 6,
+                          fontSize: 12,
+                        }}
+                      >
+                        <span>{row.label}</span>
+                        <span>
+                          {row.pct.toFixed(1)}%
+                        </span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               ) : null}
             </div>
