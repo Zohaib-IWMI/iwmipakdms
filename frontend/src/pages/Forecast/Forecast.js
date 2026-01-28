@@ -100,12 +100,21 @@ function buildClassicFileOptionsByIndex() {
         file.indexType === "SPI" && file.month
           ? String(file.month)
           : file.indexType === "ALERT"
-          ? "All"
+          ? file.filename
           : file.filename,
       value: file.url,
       meta: { filename: file.filename, month: file.month },
     });
   });
+
+  // ALERT should come from a single file (all lead months/time steps inside it).
+  // Prefer the Alert_drought_classic.nc variant when multiple exist.
+  if (byIndex.ALERT.length > 1) {
+    const preferred = byIndex.ALERT.find((o) =>
+      String(o.meta?.filename || "").toUpperCase().includes("ALERT_DROUGHT")
+    );
+    byIndex.ALERT = preferred ? [preferred] : [byIndex.ALERT[0]];
+  }
 
   Object.keys(byIndex).forEach((key) => {
     byIndex[key].sort((a, b) => {
@@ -127,7 +136,7 @@ const classicOptionsByIndex = buildClassicFileOptionsByIndex();
 
 const LEGENDS = {
   SPI: {
-    title: "Standardized Precipitation Index (ERA5L)",
+    title: "Standardized Precipitation Index ",
     stops: [
       { label: "Normal", range: "(-0.5 to 3)", color: "#1E5BFF" },
       { label: "Mild", range: "(-1 to -0.5)", color: "#00C7D4" },
@@ -379,6 +388,18 @@ function buildDateLabel(value, units) {
   }
   if (unitName.includes("hour")) {
     return base.add(Number(value), "hour").format("YYYY-MM-DD HH:mm");
+  }
+  if (unitName.includes("month")) {
+    return base.add(Number(value), "month").format("YYYY-MM-DD");
+  }
+  if (unitName.includes("year")) {
+    return base.add(Number(value), "year").format("YYYY-MM-DD");
+  }
+  if (unitName.includes("min")) {
+    return base.add(Number(value), "minute").format("YYYY-MM-DD HH:mm");
+  }
+  if (unitName.includes("sec")) {
+    return base.add(Number(value), "second").format("YYYY-MM-DD HH:mm:ss");
   }
   return String(value);
 }
@@ -655,6 +676,8 @@ function Forecast() {
   const ncMetaRef = useRef(null);
   const renderProgressRef = useRef(0);
   const renderProgressRafRef = useRef(null);
+  const mapWrapperRef = useRef(null);
+  const [dateLabelPos, setDateLabelPos] = useState({ top: 50, left: 10 });
 
   const getdistricts = (features) => {
     let temp = [];
@@ -686,6 +709,19 @@ function Forecast() {
     return classicOptionsByIndex[selectedIndex] || [];
   }, [selectedIndex]);
 
+  const monthWindowOptions = useMemo(() => {
+    // NPSMI is a 1-month index; keep month selection fixed.
+    if (selectedIndex === "NSPI") return [{ value: 1, label: "Month 1" }];
+    return MONTH_WINDOW_OPTIONS;
+  }, [selectedIndex]);
+
+  const selectedTimeLabel = useMemo(() => {
+    const match = (timeOptions || []).find(
+      (o) => Number(o?.value) === Number(selectedTime)
+    );
+    return match?.label ?? null;
+  }, [timeOptions, selectedTime]);
+
   const alertFileOption = useMemo(() => {
     const opts = classicOptionsByIndex.ALERT || [];
     // Prefer Alert_drought_classic.nc if available
@@ -702,12 +738,47 @@ function Forecast() {
   }, [dispatch, module]);
 
   useEffect(() => {
+    if (selectedIndex === "NSPI" && selectedMonthWindow !== 1) {
+      setSelectedMonthWindow(1);
+    }
+  }, [selectedIndex, selectedMonthWindow]);
+
+  useEffect(() => {
     return () => {
       if (renderProgressRafRef.current) {
         cancelAnimationFrame(renderProgressRafRef.current);
       }
     };
   }, []);
+
+  useEffect(() => {
+    const computeDatePos = () => {
+      const wrapper = mapWrapperRef.current;
+      if (!wrapper) return;
+      const zoom = wrapper.querySelector(".leaflet-control-zoom");
+      const wRect = wrapper.getBoundingClientRect();
+      if (zoom) {
+        const zRect = zoom.getBoundingClientRect();
+        const left = Math.max(8, Math.round(zRect.right - wRect.left + 8));
+        const top = Math.max(8, Math.round(zRect.top - wRect.top));
+        setDateLabelPos({ top, left });
+      } else {
+        setDateLabelPos({ top: 50, left: 10 });
+      }
+    };
+
+    computeDatePos();
+    window.addEventListener("resize", computeDatePos);
+    const observer = new MutationObserver(computeDatePos);
+    if (mapWrapperRef.current) {
+      observer.observe(mapWrapperRef.current, { childList: true, subtree: true });
+    }
+
+    return () => {
+      window.removeEventListener("resize", computeDatePos);
+      observer.disconnect();
+    };
+  }, [collapsed, selectedTimeLabel, raster]);
 
   useEffect(() => {
     const loadGeojson = async () => {
@@ -959,16 +1030,13 @@ function Forecast() {
         }
 
         const timeArray = Array.from(timeData || []);
-        const useMonthLabels =
-          (selectedIndex === "ALERT" || selectedIndex === "NSPI") &&
-          timeArray.length > 0 &&
-          timeArray.length <= 24;
-        const timeLabels = timeArray.map((value, index) => ({
-          label: useMonthLabels
-            ? `Month ${index + 1}`
-            : `T${index + 1} - ${buildDateLabel(value, timeUnits)}`,
-          value: index,
-        }));
+        const timeLabels = timeArray.map((value, index) => {
+          const dateLabel = buildDateLabel(value, timeUnits);
+          const label = dateLabel && dateLabel !== String(value)
+            ? dateLabel
+            : `T${index + 1}`;
+          return { label, value: index };
+        });
 
         setTimeOptions(timeLabels);
         setSelectedTime(0);
@@ -1540,7 +1608,7 @@ function Forecast() {
                       placeholder="Select Month"
                       value={selectedMonthWindow}
                       onChange={(value) => setSelectedMonthWindow(value)}
-                      options={MONTH_WINDOW_OPTIONS}
+                      options={monthWindowOptions}
                     />
                   </>
                 ) : (
@@ -1552,10 +1620,23 @@ function Forecast() {
                       placeholder="Select Month"
                       value={selectedMonthWindow}
                       onChange={(value) => setSelectedMonthWindow(value)}
-                      options={MONTH_WINDOW_OPTIONS}
+                      options={monthWindowOptions}
                     />
                   </>
                 )}
+
+                <div style={{ textAlign: "left", fontSize: 12, marginTop: 10, marginBottom: 6 }}>
+                  Date
+                </div>
+                <Select
+                  showSearch
+                  placeholder="Select Date"
+                  optionFilterProp="label"
+                  value={selectedTime}
+                  onChange={(value) => setSelectedTime(value)}
+                  options={timeOptions}
+                  disabled={timeOptions.length === 0}
+                />
               </div>
               <div>
                 <p className="sidebar-module">Opacity</p>
@@ -1592,7 +1673,7 @@ function Forecast() {
             </Space>
           </Sider>
           <Content style={contentStyle}>
-            <div style={{ position: "relative", height: "100%" }}>
+            <div ref={mapWrapperRef} style={{ position: "relative", height: "100%" }}>
               <div style={{ position: "absolute", top: 10, left: 10, zIndex: 1000 }}>
                 <Button
                   icon={
@@ -1606,6 +1687,26 @@ function Forecast() {
                   style={{ fontSize: "16px" }}
                 />
               </div>
+
+              {selectedTimeLabel ? (
+                <div
+                  style={{
+                    position: "absolute",
+                    top: dateLabelPos.top,
+                    left: dateLabelPos.left,
+                    zIndex: 1000,
+                    background: "rgba(0,0,0,0.6)",
+                    color: "#fff",
+                    padding: "6px 10px",
+                    borderRadius: 6,
+                    fontWeight: 700,
+                    fontSize: 12,
+                    maxWidth: 260,
+                  }}
+                >
+                  Date: {selectedTimeLabel}
+                </div>
+              ) : null}
               {(loading || renderLoading) && (
                 <div
                   style={{
