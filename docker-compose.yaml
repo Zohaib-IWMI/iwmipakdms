@@ -88,7 +88,7 @@ services:
     build:
       context: ./frontend
     ports:
-      - 85:80
+      - $REACT_LOCAL_PORT:$REACT_DOCKER_PORT
       - 443:443
     restart: always
     volumes:

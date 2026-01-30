@@ -678,6 +678,7 @@ function Forecast() {
   const renderProgressRafRef = useRef(null);
   const mapWrapperRef = useRef(null);
   const [dateLabelPos, setDateLabelPos] = useState({ top: 50, left: 10 });
+  const pendingDateRerenderRef = useRef(false);
 
   const getdistricts = (features) => {
     let temp = [];
@@ -1061,6 +1062,33 @@ function Forecast() {
     if (!raster) return;
     setRaster((prev) => (prev ? { ...prev, opacity } : prev));
   }, [opacity]);
+
+  // When the user changes the Date (time index), refresh the raster immediately.
+  // Keep Apply for initial render / other changes, but date changes should be instant.
+  useEffect(() => {
+    if (!raster) return;
+    if (!selectedFile) return;
+    if (!ncMetaRef.current) return;
+    if (!Array.isArray(timeOptions) || timeOptions.length === 0) return;
+
+    if (renderLoading) {
+      pendingDateRerenderRef.current = true;
+      return;
+    }
+
+    pendingDateRerenderRef.current = false;
+    buildRaster();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedTime]);
+
+  useEffect(() => {
+    if (renderLoading) return;
+    if (!pendingDateRerenderRef.current) return;
+    if (!raster) return;
+    pendingDateRerenderRef.current = false;
+    buildRaster();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [renderLoading]);
 
   const buildRaster = () => {
     if (!ncMetaRef.current) {
@@ -1625,18 +1653,7 @@ function Forecast() {
                   </>
                 )}
 
-                <div style={{ textAlign: "left", fontSize: 12, marginTop: 10, marginBottom: 6 }}>
-                  Date
-                </div>
-                <Select
-                  showSearch
-                  placeholder="Select Date"
-                  optionFilterProp="label"
-                  value={selectedTime}
-                  onChange={(value) => setSelectedTime(value)}
-                  options={timeOptions}
-                  disabled={timeOptions.length === 0}
-                />
+                {/* Date selector moved onto the map (next to Date label). */}
               </div>
               <div>
                 <p className="sidebar-module">Opacity</p>
@@ -1688,7 +1705,7 @@ function Forecast() {
                 />
               </div>
 
-              {selectedTimeLabel ? (
+              {selectedFile ? (
                 <div
                   style={{
                     position: "absolute",
@@ -1701,10 +1718,25 @@ function Forecast() {
                     borderRadius: 6,
                     fontWeight: 700,
                     fontSize: 12,
-                    maxWidth: 260,
+                    maxWidth: 360,
                   }}
                 >
-                  Date: {selectedTimeLabel}
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ whiteSpace: "nowrap" }}>Date:</span>
+                    <Select
+                      showSearch
+                      placeholder="Select Date"
+                      optionFilterProp="label"
+                      value={selectedTime}
+                      onChange={(value) => setSelectedTime(value)}
+                      options={timeOptions}
+                      disabled={!Array.isArray(timeOptions) || timeOptions.length === 0}
+                      size="small"
+                      style={{ minWidth: 170 }}
+                      dropdownMatchSelectWidth={false}
+                      getPopupContainer={(trigger) => trigger.parentNode}
+                    />
+                  </div>
                 </div>
               ) : null}
               {(loading || renderLoading) && (
