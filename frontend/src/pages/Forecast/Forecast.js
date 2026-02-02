@@ -156,38 +156,38 @@ const LEGENDS = {
   NSPI: {
     title: "NPSMI",
     stops: [
-      { label: "Normal", range: "(0 to 0.5)", color: "#1E5BFF" },
-      { label: "Mild", range: "(0.5 to 0.6)", color: "#00C7D4" },
-      { label: "Moderate", range: "(0.6 to 0.7)", color: "#F4D03F" },
-      { label: "High", range: "(0.7 to 0.8)", color: "#F39C12" },
-      { label: "Severe", range: "(0.8+)", color: "#E74C3C" },
+      { label: "Normal", range: "(0 to 0.5)", color: "#2E7D32" },
+      { label: "Mild", range: "(0.5 to 0.6)", color: "#66BB6A" },
+      { label: "Moderate", range: "(0.6 to 0.7)", color: "#FBC02D" },
+      { label: "High", range: "(0.7 to 0.8)", color: "#FB8C00" },
+      { label: "Severe", range: "(0.8+)", color: "#C62828" },
     ],
     getColor: (v) => {
       if (!Number.isFinite(v)) return null;
-      if (v < 0.5) return "#1E5BFF";
-      if (v < 0.6) return "#00C7D4";
-      if (v < 0.7) return "#F4D03F";
-      if (v < 0.8) return "#F39C12";
-      return "#E74C3C";
+      if (v < 0.5) return "#2E7D32";
+      if (v < 0.6) return "#66BB6A";
+      if (v < 0.7) return "#FBC02D";
+      if (v < 0.8) return "#FB8C00";
+      return "#C62828";
     },
   },
   ALERT: {
     title: "Alert Drought",
     stops: [
-      { label: "Normal", range: "(0)", color: "#1E5BFF" },
-      { label: "Watch", range: "(1)", color: "#00C7D4" },
-      { label: "Alert", range: "(2)", color: "#F4D03F" },
-      { label: "Warning", range: "(3)", color: "#F39C12" },
-      { label: "Emergency", range: "(4)", color: "#E74C3C" },
+      { label: "Normal", range: "(0)", color: "#2E7D32" },
+      { label: "Watch", range: "(1)", color: "#F9A825" },
+      { label: "Alert", range: "(2)", color: "#EF6C00" },
+      { label: "Warning", range: "(3)", color: "#C62828" },
+      { label: "Emergency", range: "(4)", color: "#7F0000" },
     ],
     getColor: (v) => {
       if (!Number.isFinite(v)) return null;
       const k = Math.round(v);
-      if (k <= 0) return "#1E5BFF";
-      if (k === 1) return "#00C7D4";
-      if (k === 2) return "#F4D03F";
-      if (k === 3) return "#F39C12";
-      return "#E74C3C";
+      if (k <= 0) return "#2E7D32";
+      if (k === 1) return "#F9A825";
+      if (k === 2) return "#EF6C00";
+      if (k === 3) return "#C62828";
+      return "#7F0000";
     },
   },
 };
