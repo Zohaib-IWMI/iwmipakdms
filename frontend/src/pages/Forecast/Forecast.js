@@ -37,6 +37,7 @@ import dayjs from "dayjs";
 import L from "leaflet";
 import NetCDFReader from "netcdfjs";
 import Axios from "axios";
+import turfBuffer from "@turf/buffer";
 
 import HeaderMap from "../../components/HeaderMap";
 import { setmodule } from "../../slices/mapView";
@@ -67,6 +68,149 @@ const classicNcContext = require.context(
   false,
   /_classic\.nc$/
 );
+
+function isProbablyLon360(lonData) {
+  if (!lonData || lonData.length < 2) return false;
+  const lonMin = Math.min(...lonData);
+  const lonMax = Math.max(...lonData);
+  return lonMin >= 0 && lonMax > 180;
+}
+
+function normalizeLonToDataset(lon, lonData) {
+  if (!Number.isFinite(lon)) return lon;
+  if (!isProbablyLon360(lonData)) return lon;
+  return lon < 0 ? lon + 360 : lon;
+}
+
+function lowerBound(values, target, ascending) {
+  let low = 0;
+  let high = values.length;
+  while (low < high) {
+    const mid = (low + high) >> 1;
+    const v = values[mid];
+    if (ascending ? v < target : v > target) {
+      low = mid + 1;
+    } else {
+      high = mid;
+    }
+  }
+  return low;
+}
+
+function upperBound(values, target, ascending) {
+  let low = 0;
+  let high = values.length;
+  while (low < high) {
+    const mid = (low + high) >> 1;
+    const v = values[mid];
+    if (ascending ? v <= target : v >= target) {
+      low = mid + 1;
+    } else {
+      high = mid;
+    }
+  }
+  return low;
+}
+
+function fractionalIndex(values, target, ascending) {
+  const n = values.length;
+  if (n <= 1) return 0;
+
+  const i = lowerBound(values, target, ascending);
+  if (i <= 0) return 0;
+  if (i >= n) return n - 1;
+
+  const v0 = values[i - 1];
+  const v1 = values[i];
+  const denom = v1 - v0;
+  if (!Number.isFinite(denom) || denom === 0) return i - 1;
+  const t = (target - v0) / denom;
+  return (i - 1) + Math.max(0, Math.min(1, t));
+}
+
+function estimateStep(values) {
+  if (!values || values.length < 2) return 0;
+  const diffs = [];
+  for (let i = 1; i < values.length; i += 1) {
+    const d = values[i] - values[i - 1];
+    if (Number.isFinite(d) && d !== 0) diffs.push(Math.abs(d));
+  }
+  if (!diffs.length) return 0;
+  diffs.sort((a, b) => a - b);
+  return diffs[Math.floor(diffs.length / 2)];
+}
+
+function boundsEdgesFromCenters(values) {
+  if (!values || values.length === 0) return null;
+  if (values.length === 1) {
+    const v = Number(values[0]);
+    if (!Number.isFinite(v)) return null;
+    return { minEdge: v, maxEdge: v };
+  }
+
+  const first = Number(values[0]);
+  const second = Number(values[1]);
+  const last = Number(values[values.length - 1]);
+  const prev = Number(values[values.length - 2]);
+  if (![first, second, last, prev].every(Number.isFinite)) return null;
+
+  const step0 = second - first;
+  const stepN = last - prev;
+
+  // Values are cell centers; edges are half-step beyond end centers.
+  const edgeA = first - step0 / 2;
+  const edgeB = last + stepN / 2;
+  const minEdge = Math.min(edgeA, edgeB);
+  const maxEdge = Math.max(edgeA, edgeB);
+  return { minEdge, maxEdge };
+}
+
+function getGeojsonBounds(geojson, lonData) {
+  let minLon = Number.POSITIVE_INFINITY;
+  let maxLon = Number.NEGATIVE_INFINITY;
+  let minLat = Number.POSITIVE_INFINITY;
+  let maxLat = Number.NEGATIVE_INFINITY;
+
+  const bump = (coord) => {
+    if (!coord || coord.length < 2) return;
+    let lon = Number(coord[0]);
+    const lat = Number(coord[1]);
+    if (!Number.isFinite(lon) || !Number.isFinite(lat)) return;
+    lon = normalizeLonToDataset(lon, lonData);
+    minLon = Math.min(minLon, lon);
+    maxLon = Math.max(maxLon, lon);
+    minLat = Math.min(minLat, lat);
+    maxLat = Math.max(maxLat, lat);
+  };
+
+  const walkCoords = (coords) => {
+    if (!Array.isArray(coords)) return;
+    if (coords.length && typeof coords[0] === "number") {
+      bump(coords);
+      return;
+    }
+    coords.forEach(walkCoords);
+  };
+
+  const asFeatures = (g) => {
+    if (!g) return [];
+    if (Array.isArray(g.features)) return g.features;
+    if (g.type === "Feature") return [g];
+    if (typeof g.type === "string" && g.coordinates) {
+      return [{ type: "Feature", properties: {}, geometry: g }];
+    }
+    return [];
+  };
+
+  asFeatures(geojson).forEach((feature) => {
+    const geometry = feature?.geometry;
+    if (!geometry) return;
+    walkCoords(geometry.coordinates);
+  });
+
+  if (!Number.isFinite(minLon) || !Number.isFinite(minLat)) return null;
+  return { minLon, maxLon, minLat, maxLat };
+}
 
 function parseMonthFromFilename(filename) {
   const match = filename.match(/\.(\d{2})M(?:_classic)?\.nc$/i);
@@ -408,10 +552,8 @@ const drawPakistanMask = (
   ctx,
   width,
   height,
-  lonMin,
-  lonMax,
-  latMin,
-  latMax,
+  lonData,
+  latData,
   geojson
 ) => {
   ctx.save();
@@ -419,11 +561,25 @@ const drawPakistanMask = (
   ctx.fillStyle = "rgba(0,0,0,1)";
   ctx.beginPath();
 
+  const lonAscending = lonData?.[0] < lonData?.[lonData.length - 1];
+  const latAscending = latData?.[0] < latData?.[latData.length - 1];
+
+  const toX = (lon) => {
+    const lonN = normalizeLonToDataset(Number(lon), lonData);
+    // lon/lat arrays typically store cell centers; canvas pixels are also cell areas.
+    // Draw polygons in pixel-center coordinates to avoid a half-cell gap.
+    return fractionalIndex(lonData, lonN, lonAscending) + 0.5;
+  };
+  const toY = (lat) => {
+    const fi = fractionalIndex(latData, Number(lat), latAscending);
+    return (latAscending ? height - 1 - fi : fi) + 0.5;
+  };
+
   const drawRing = (ring) => {
     ring.forEach((coord, idx) => {
       const [lon, lat] = coord;
-      const x = ((lon - lonMin) / (lonMax - lonMin)) * (width - 1);
-      const y = ((latMax - lat) / (latMax - latMin)) * (height - 1);
+      const x = toX(lon);
+      const y = toY(lat);
       if (idx === 0) {
         ctx.moveTo(x, y);
       } else {
@@ -437,7 +593,15 @@ const drawPakistanMask = (
     polygon.forEach((ring) => drawRing(ring));
   };
 
-  geojson.features.forEach((feature) => {
+  const features = Array.isArray(geojson?.features)
+    ? geojson.features
+    : geojson?.type === "Feature"
+    ? [geojson]
+    : geojson?.type && geojson?.coordinates
+    ? [{ type: "Feature", properties: {}, geometry: geojson }]
+    : [];
+
+  features.forEach((feature) => {
     const geometry = feature.geometry;
     if (!geometry) return;
     if (geometry.type === "Polygon") {
@@ -451,13 +615,22 @@ const drawPakistanMask = (
   ctx.restore();
 };
 
+function bufferBoundaryGeojson(geojson, bufferDegrees) {
+  const dist = Number(bufferDegrees);
+  if (!geojson || !Number.isFinite(dist) || dist <= 0) return geojson;
+  try {
+    return turfBuffer(geojson, dist, { units: "degrees" });
+  } catch (error) {
+    console.warn("[Forecast] Boundary buffer failed; using original boundary", error);
+    return geojson;
+  }
+}
+
 const buildGeojsonMaskAlpha = (
   width,
   height,
-  lonMin,
-  lonMax,
-  latMin,
-  latMax,
+  lonData,
+  latData,
   geojson
 ) => {
   const maskCanvas = document.createElement("canvas");
@@ -468,11 +641,23 @@ const buildGeojsonMaskAlpha = (
   mctx.fillStyle = "rgba(0,0,0,1)";
   mctx.beginPath();
 
+  const lonAscending = lonData?.[0] < lonData?.[lonData.length - 1];
+  const latAscending = latData?.[0] < latData?.[latData.length - 1];
+
+  const toX = (lon) => {
+    const lonN = normalizeLonToDataset(Number(lon), lonData);
+    return fractionalIndex(lonData, lonN, lonAscending) + 0.5;
+  };
+  const toY = (lat) => {
+    const fi = fractionalIndex(latData, Number(lat), latAscending);
+    return (latAscending ? height - 1 - fi : fi) + 0.5;
+  };
+
   const drawRing = (ring) => {
     ring.forEach((coord, idx) => {
       const [lon, lat] = coord;
-      const x = ((lon - lonMin) / (lonMax - lonMin)) * (width - 1);
-      const y = ((latMax - lat) / (latMax - latMin)) * (height - 1);
+      const x = toX(lon);
+      const y = toY(lat);
       if (idx === 0) {
         mctx.moveTo(x, y);
       } else {
@@ -486,7 +671,15 @@ const buildGeojsonMaskAlpha = (
     polygon.forEach((ring) => drawRing(ring));
   };
 
-  (geojson?.features || []).forEach((feature) => {
+  const features = Array.isArray(geojson?.features)
+    ? geojson.features
+    : geojson?.type === "Feature"
+    ? [geojson]
+    : geojson?.type && geojson?.coordinates
+    ? [{ type: "Feature", properties: {}, geometry: geojson }]
+    : [];
+
+  features.forEach((feature) => {
     const geometry = feature?.geometry;
     if (!geometry) return;
     if (geometry.type === "Polygon") {
@@ -523,6 +716,59 @@ function NcRasterLayer({ raster }) {
       map.removeLayer(overlay);
     };
   }, [map, raster]);
+
+  return null;
+}
+
+function NcWmsLayer({ layer }) {
+  const map = useMap();
+  const wmsRef = useRef(null);
+
+  useEffect(() => {
+    if (!map || !layer?.layerName) return undefined;
+
+    const workspace = layer.workspace || "PakDMS";
+    const url = `../geoserver/${workspace}/wms`;
+    const wms = L.tileLayer.wms(url, {
+      layers: `${workspace}:${layer.layerName}`,
+      format: "image/png",
+      transparent: true,
+      tiled: true,
+      opacity: Number.isFinite(Number(layer.opacity)) ? Number(layer.opacity) : 1,
+      zIndex: 500,
+    });
+
+    wms.addTo(map);
+    wmsRef.current = wms;
+
+    const b = layer.bounds4326;
+    if (b && Number.isFinite(b.west) && Number.isFinite(b.south) && Number.isFinite(b.east) && Number.isFinite(b.north)) {
+      map.fitBounds(
+        [
+          [b.south, b.west],
+          [b.north, b.east],
+        ],
+        { maxZoom: 8 }
+      );
+    }
+
+    return () => {
+      try {
+        map.removeLayer(wms);
+      } catch (_) {
+        // ignore
+      }
+      wmsRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [map, layer?.workspace, layer?.layerName]);
+
+  useEffect(() => {
+    const wms = wmsRef.current;
+    if (!wms) return;
+    const op = Number.isFinite(Number(layer?.opacity)) ? Number(layer.opacity) : 1;
+    wms.setOpacity(op);
+  }, [layer?.opacity]);
 
   return null;
 }
@@ -577,8 +823,9 @@ function NcValueOnClick({ ncMetaRef, selectedTime }) {
         return dimensionSizes.slice(index + 1).reduce((acc, val) => acc * val, 1);
       });
 
+      const lonClick = normalizeLonToDataset(e.latlng.lng, lonData);
       const latIndex = findNearestIndex(latData, e.latlng.lat);
-      const lonIndex = findNearestIndex(lonData, e.latlng.lng);
+      const lonIndex = findNearestIndex(lonData, lonClick);
       if (latIndex < 0 || lonIndex < 0) return;
 
       const timeSize = timePos >= 0 ? dimensionSizes[timePos] : 1;
@@ -639,6 +886,41 @@ function NcValueOnClick({ ncMetaRef, selectedTime }) {
   return null;
 }
 
+function BoundaryOutlineLayer({ geojson, darkmode }) {
+  const map = useMap();
+
+  useEffect(() => {
+    if (!map || !geojson) return undefined;
+    const paneName = "boundaryPane";
+    if (!map.getPane(paneName)) {
+      const pane = map.createPane(paneName);
+      pane.style.zIndex = 650;
+      pane.style.pointerEvents = "none";
+    }
+
+    const layer = L.geoJSON(geojson, {
+      pane: paneName,
+      style: {
+        color: darkmode ? "#ffffff" : "#111111",
+        weight: 2,
+        opacity: 0.9,
+        fill: false,
+      },
+    });
+
+    layer.addTo(map);
+    return () => {
+      try {
+        map.removeLayer(layer);
+      } catch (_) {
+        // ignore
+      }
+    };
+  }, [map, geojson, darkmode]);
+
+  return null;
+}
+
 function Forecast() {
   const dispatch = useDispatch();
   const navigate = useNavigate();
@@ -667,7 +949,8 @@ function Forecast() {
   const [loading, setLoading] = useState(false);
   const [renderLoading, setRenderLoading] = useState(false);
   const [renderProgress, setRenderProgress] = useState(0);
-  const [raster, setRaster] = useState(null);
+  const [wmsLayer, setWmsLayer] = useState(null);
+  const [previousStoreName, setPreviousStoreName] = useState(null);
   const [pakistanGeojsonData, setPakistanGeojsonData] = useState(null);
   const [clipGeojsonData, setClipGeojsonData] = useState(null);
   const [coverageStats, setCoverageStats] = useState(null);
@@ -679,6 +962,7 @@ function Forecast() {
   const mapWrapperRef = useRef(null);
   const [dateLabelPos, setDateLabelPos] = useState({ top: 50, left: 10 });
   const pendingDateRerenderRef = useRef(false);
+  const activeForecastJobRef = useRef(null);
 
   const getdistricts = (features) => {
     let temp = [];
@@ -709,6 +993,23 @@ function Forecast() {
   const fileOptions = useMemo(() => {
     return classicOptionsByIndex[selectedIndex] || [];
   }, [selectedIndex]);
+
+  const selectedFileName = useMemo(() => {
+    const all = [
+      ...(classicOptionsByIndex.SPI || []),
+      ...(classicOptionsByIndex.NSPI || []),
+      ...(classicOptionsByIndex.ALERT || []),
+    ];
+    const hit = all.find((o) => o.value === selectedFile);
+    return hit?.meta?.filename || hit?.label || null;
+  }, [selectedFile]);
+
+  const selectedBoundaryLabel = useMemo(() => {
+    if (selectedTehsil) return `Tehsil: ${selectedTehsil}`;
+    if (selectedDistrict) return `District: ${selectedDistrict}`;
+    if (selectedUnit) return `Province: ${selectedUnit}`;
+    return "Boundary: Pakistan";
+  }, [selectedUnit, selectedDistrict, selectedTehsil]);
 
   const monthWindowOptions = useMemo(() => {
     // NPSMI is a 1-month index; keep month selection fixed.
@@ -779,7 +1080,8 @@ function Forecast() {
       window.removeEventListener("resize", computeDatePos);
       observer.disconnect();
     };
-  }, [collapsed, selectedTimeLabel, raster]);
+  }, [collapsed, selectedTimeLabel, wmsLayer]);
+
 
   useEffect(() => {
     const loadGeojson = async () => {
@@ -870,7 +1172,7 @@ function Forecast() {
           CQL_FILTER = `name='${selectedDistrict}'`;
         } else if (selectedUnit) {
           typeName = "PakDMS:units";
-          CQL_FILTER = `name='${selectedUnit}'`;
+          CQL_FILTER = `name ILIKE '${selectedUnit}'`;
         }
 
         const resp = await Axios.get("../geoserver/ows", {
@@ -901,7 +1203,7 @@ function Forecast() {
   useEffect(() => {
     if (!selectedFile) return;
 
-    setRaster(null);
+    setWmsLayer(null);
     setRenderLoading(false);
     setRenderProgress(0);
 
@@ -938,11 +1240,40 @@ function Forecast() {
           return Number(dimIds[0]);
         };
 
-        const findVar = (candidates) =>
-          variables.find((variable) => {
-            const name = String(variable?.name || "").toLowerCase();
-            return candidates.some((candidate) => name.includes(candidate));
-          });
+        const getVarAttr = (variable, attrName) =>
+          variable?.attributes?.find((attr) => attr.name === attrName)?.value;
+
+        const scoreCoordVar = (variable, candidates) => {
+          if (!variable) return 0;
+          const name = String(variable?.name || "").toLowerCase();
+          const standardName = String(getVarAttr(variable, "standard_name") || "").toLowerCase();
+          const units = String(getVarAttr(variable, "units") || "").toLowerCase();
+
+          const nameMatches = candidates.some((candidate) => name.includes(candidate));
+          if (!nameMatches) return 0;
+
+          let score = 1;
+
+          // CF conventions: prefer real lat/lon
+          if (standardName === "latitude" || standardName === "longitude") score += 100;
+          if (units.includes("degree")) score += 50;
+
+          // Prefer explicit names over generic x/y
+          if (name.includes("lat") || name.includes("latitude")) score += 20;
+          if (name.includes("lon") || name.includes("longitude")) score += 20;
+          if (name === "y") score -= 10;
+          if (name === "x") score -= 10;
+
+          return score;
+        };
+
+        const findVar = (candidates) => {
+          const ranked = (variables || [])
+            .map((variable) => ({ variable, score: scoreCoordVar(variable, candidates) }))
+            .filter((x) => x.score > 0)
+            .sort((a, b) => b.score - a.score);
+          return ranked[0]?.variable;
+        };
 
         const latVar = findVar(["lat", "latitude", "y"]);
         const lonVar = findVar(["lon", "longitude", "x"]);
@@ -1059,14 +1390,17 @@ function Forecast() {
   }, [selectedFile]);
 
   useEffect(() => {
-    if (!raster) return;
-    setRaster((prev) => (prev ? { ...prev, opacity } : prev));
+    setWmsLayer((prev) => {
+      if (!prev) return prev;
+      if (Number(prev.opacity) === Number(opacity)) return prev;
+      return { ...prev, opacity };
+    });
   }, [opacity]);
 
   // When the user changes the Date (time index), refresh the raster immediately.
   // Keep Apply for initial render / other changes, but date changes should be instant.
   useEffect(() => {
-    if (!raster) return;
+    if (!wmsLayer) return;
     if (!selectedFile) return;
     if (!ncMetaRef.current) return;
     if (!Array.isArray(timeOptions) || timeOptions.length === 0) return;
@@ -1084,13 +1418,22 @@ function Forecast() {
   useEffect(() => {
     if (renderLoading) return;
     if (!pendingDateRerenderRef.current) return;
-    if (!raster) return;
+    if (!wmsLayer) return;
     pendingDateRerenderRef.current = false;
     buildRaster();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [renderLoading]);
 
-  const buildRaster = () => {
+  const buildRaster = async () => {
+    if (!selectedFile) {
+      api.info({
+        message: "Select a NetCDF file",
+        description: "Please select a NetCDF file first.",
+        placement: "bottomRight",
+      });
+      return;
+    }
+
     if (!ncMetaRef.current) {
       api.info({
         message: "Select a valid NetCDF file",
@@ -1109,252 +1452,139 @@ function Forecast() {
       return;
     }
 
+    // Cancel any in-flight job (best-effort)
+    try {
+      if (activeForecastJobRef.current) {
+        await Axios.post("../python/forecast/cancel", { params: { jobId: activeForecastJobRef.current } });
+      }
+    } catch (_) {
+      // ignore
+    }
+
     setRenderLoading(true);
     setRenderProgress(0);
     setCoverageStats(null);
     setStatsOpen(false);
 
-    const {
-      dataVar,
-      dataValues,
-      latData,
-      lonData,
-      dimensionSizes,
-      dataUnits,
-      latDimId,
-      lonDimId,
-      timeDimId,
-    } = ncMetaRef.current;
-
-    const latLength = latData.length;
-    const lonLength = lonData.length;
-    const latAscending = latData[0] < latData[latLength - 1];
-
-    const dims = Array.isArray(dataVar.dimensions) ? dataVar.dimensions : [];
-    if (!dims.length) {
-      api.error({
-        message: "Invalid NetCDF variable",
-        description: "Data variable has no dimensions.",
-        placement: "bottomRight",
-      });
-      setRenderLoading(false);
-      return;
-    }
-
-    const latPos = latDimId == null ? -1 : dims.indexOf(latDimId);
-    const lonPos = lonDimId == null ? -1 : dims.indexOf(lonDimId);
-    const timePos = timeDimId == null ? -1 : dims.indexOf(timeDimId);
-
-    if (latPos < 0 || lonPos < 0) {
-      api.error({
-        message: "Unsupported grid",
-        description:
-          "Unable to match data variable dimensions with lat/lon dimensions.",
-        placement: "bottomRight",
-      });
-      setRenderLoading(false);
-      return;
-    }
-
-    const strides = dimensionSizes.map((_, index) => {
-      return dimensionSizes.slice(index + 1).reduce((acc, val) => acc * val, 1);
-    });
-
-    const canvas = document.createElement("canvas");
-    canvas.width = lonLength;
-    canvas.height = latLength;
-    const ctx = canvas.getContext("2d");
-    const imageData = ctx.createImageData(lonLength, latLength);
-
-    const lonMin = Math.min(...lonData);
-    const lonMax = Math.max(...lonData);
-    const latMin = Math.min(...latData);
-    const latMax = Math.max(...latData);
-    const clipGeojson = clipGeojsonData || pakistanGeojsonData;
-    const clipAlpha = buildGeojsonMaskAlpha(
-      lonLength,
-      latLength,
-      lonMin,
-      lonMax,
-      latMin,
-      latMax,
-      clipGeojson
-    );
-
-    const scaleFactorRaw = getAttribute(dataVar, "scale_factor");
-    const addOffsetRaw = getAttribute(dataVar, "add_offset");
-    const scaleFactor = Number.isFinite(Number(scaleFactorRaw))
-      ? Number(scaleFactorRaw)
-      : 1;
-    const addOffset = Number.isFinite(Number(addOffsetRaw))
-      ? Number(addOffsetRaw)
-      : 0;
-    const fillValue = getAttribute(dataVar, "_FillValue");
-    const missingValue = getAttribute(dataVar, "missing_value");
-    const validMinRaw = getAttribute(dataVar, "valid_min");
-    const validMaxRaw = getAttribute(dataVar, "valid_max");
-    const validMin = Number.isFinite(Number(validMinRaw))
-      ? Number(validMinRaw)
-      : undefined;
-    const validMax = Number.isFinite(Number(validMaxRaw))
-      ? Number(validMaxRaw)
-      : undefined;
-
-    const matchesFill = (raw, fill) => {
-      if (fill === undefined || fill === null) return false;
-      if (Array.isArray(fill)) return fill.includes(raw);
-      if (ArrayBuffer.isView(fill) && typeof fill.length === "number") {
-        if (fill.length === 1) return raw === fill[0];
-      }
-      return raw === fill;
-    };
-
-    let min = Number.POSITIVE_INFINITY;
-    let max = Number.NEGATIVE_INFINITY;
-
-    const buckets = getLegendBuckets(selectedIndex);
-    const bucketCounts = buckets.reduce((acc, k) => {
-      acc[k] = 0;
-      return acc;
-    }, {});
-    let noDataCount = 0;
-    let totalInside = 0;
-    let totalValid = 0;
-
-    const progressStep = Math.max(1, Math.floor(latLength / 50));
-    const updateProgress = (value) => {
-      renderProgressRef.current = value;
-      if (renderProgressRafRef.current) return;
-      renderProgressRafRef.current = requestAnimationFrame(() => {
-        setRenderProgress(renderProgressRef.current);
-        renderProgressRafRef.current = null;
-      });
-    };
-
-    const lonAscending = lonData[0] < lonData[lonLength - 1];
-    const timeSize = timePos >= 0 ? dimensionSizes[timePos] : 1;
-    const timeIndexSafe =
-      timePos >= 0
-        ? Math.max(0, Math.min(Number(selectedTime) || 0, timeSize - 1))
-        : 0;
-
-    for (let y = 0; y < latLength; y += 1) {
-      const latIndex = latAscending ? latLength - 1 - y : y;
-      for (let x = 0; x < lonLength; x += 1) {
-        const pix = y * lonLength + x;
-        const inside = clipAlpha[pix] > 0;
-        const lonIndex = lonAscending ? x : lonLength - 1 - x;
-
-        const indices = new Array(dims.length).fill(0);
-        if (timePos >= 0) indices[timePos] = timeIndexSafe;
-        indices[latPos] = latIndex;
-        indices[lonPos] = lonIndex;
-
-        const dataIndex = indices.reduce(
-          (acc, idx, i) => acc + idx * strides[i],
-          0
-        );
-        const rawValue = dataValues?.[dataIndex];
-
-        const rawIsFill =
-          matchesFill(rawValue, fillValue) || matchesFill(rawValue, missingValue);
-        const scaledValue = rawIsFill
-          ? Number.NaN
-          : Number(rawValue) * scaleFactor + addOffset;
-
-        const isValidRange =
-          (validMin === undefined || scaledValue >= validMin) &&
-          (validMax === undefined || scaledValue <= validMax);
-        const isValid =
-          Number.isFinite(scaledValue) &&
-          Math.abs(scaledValue) < 1e20 &&
-          isValidRange;
-
-        if (isValid) {
-          min = Math.min(min, scaledValue);
-          max = Math.max(max, scaledValue);
-        }
-
-        const index = (y * lonLength + x) * 4;
-        if (!inside) {
-          imageData.data[index] = 0;
-          imageData.data[index + 1] = 0;
-          imageData.data[index + 2] = 0;
-          imageData.data[index + 3] = 0;
-          continue;
-        }
-
-        totalInside += 1;
-
-        if (isValid) {
-          const cfg = LEGENDS[selectedIndex];
-          const colorHex = cfg?.getColor ? cfg.getColor(scaledValue) : null;
-          const { r, g, b } = colorHex ? hexToRgb(colorHex) : interpolateColor(scaledValue);
-          imageData.data[index] = r;
-          imageData.data[index + 1] = g;
-          imageData.data[index + 2] = b;
-          imageData.data[index + 3] = Math.round(opacity * 255);
-
-          totalValid += 1;
-          const bucket = classifyLegendBucket(selectedIndex, scaledValue);
-          if (bucket && bucketCounts[bucket] !== undefined) {
-            bucketCounts[bucket] += 1;
+    // Prefer a URL-based clip (small payload) instead of embedding full GeoJSON.
+    let clipUrl = null;
+    try {
+      const hasSelection = !!(selectedTehsil || selectedDistrict || selectedUnit);
+      if (hasSelection) {
+        let typeName = "PakDMS:units";
+        let CQL_FILTER = null;
+        if (selectedTehsil) {
+          typeName = "PakDMS:tehsils";
+          if (selectedDistrict) {
+            CQL_FILTER = `district='${selectedDistrict}' AND name='${selectedTehsil}'`;
+          } else {
+            CQL_FILTER = `name='${selectedTehsil}'`;
           }
-        } else {
-          imageData.data[index] = 0;
-          imageData.data[index + 1] = 0;
-          imageData.data[index + 2] = 0;
-          imageData.data[index + 3] = 0;
-          noDataCount += 1;
+        } else if (selectedDistrict) {
+          typeName = "PakDMS:districts";
+          CQL_FILTER = `name='${selectedDistrict}'`;
+        } else if (selectedUnit) {
+          typeName = "PakDMS:units";
+          CQL_FILTER = `name ILIKE '${selectedUnit}'`;
         }
-      }
 
-      if (y % progressStep === 0) {
-        updateProgress(10 + Math.round((y / latLength) * 90));
+        const wfs = new URL("../geoserver/ows", window.location.href);
+        wfs.searchParams.set("service", "WFS");
+        wfs.searchParams.set("version", "1.0.0");
+        wfs.searchParams.set("request", "GetFeature");
+        wfs.searchParams.set("typeName", typeName);
+        wfs.searchParams.set("outputFormat", "application/json");
+        if (CQL_FILTER) wfs.searchParams.set("CQL_FILTER", CQL_FILTER);
+        clipUrl = wfs.toString();
+      } else {
+        const pk = new URL(pakistanGeojsonUrl, window.location.origin);
+        clipUrl = pk.toString();
       }
+    } catch (_) {
+      clipUrl = null;
     }
 
-    ctx.putImageData(imageData, 0, 0);
+    let assetPath = null;
+    let assetUrl = null;
+    try {
+      const u = new URL(selectedFile, window.location.origin);
+      if (u.origin === window.location.origin) {
+        assetPath = u.pathname + u.search;
+      } else {
+        assetUrl = u.href;
+      }
+    } catch (_) {
+      assetUrl = selectedFile;
+    }
 
-    // Apply an anti-aliased clip mask for cleaner edges
-    drawPakistanMask(ctx, lonLength, latLength, lonMin, lonMax, latMin, latMax, clipGeojson);
-
-    const bounds = [
-      [latMin, lonMin],
-      [latMax, lonMax],
-    ];
-
-    setRaster({
-      dataUrl: canvas.toDataURL("image/png"),
-      bounds,
-      opacity,
-      stats: {
-        min: Number.isFinite(min) ? min : null,
-        max: Number.isFinite(max) ? max : null,
-        units: dataUnits || "",
-      },
-    });
-
-    const coverageItems = buckets.map((label) => {
-      const count = Number(bucketCounts[label] || 0);
-      const pct = totalInside > 0 ? (count / totalInside) * 100 : 0;
-      return { label, count, pct };
-    });
-    if (noDataCount > 0) {
-      coverageItems.push({
-        label: "No data",
-        count: noDataCount,
-        pct: totalInside > 0 ? (noDataCount / totalInside) * 100 : 0,
+    try {
+      const startResp = await Axios.post("../python/forecast/apply", {
+        params: {
+          assetPath,
+          assetUrl,
+          timeIndex: Number(selectedTime) || 0,
+          indexKey: selectedIndex,
+          clipUrl,
+          previousStoreName,
+        },
       });
-    }
-    setCoverageStats({
-      totalInside,
-      totalValid,
-      items: coverageItems,
-    });
 
-    updateProgress(100);
-    setRenderLoading(false);
+      const jobId = startResp?.data?.jobId;
+      if (!jobId) throw new Error("No jobId returned by server");
+      activeForecastJobRef.current = jobId;
+
+      const startedAt = Date.now();
+      // Poll job status
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const statusResp = await Axios.get(`../python/forecast/jobs/${jobId}`);
+        const job = statusResp?.data;
+
+        const pct = Number(job?.progress);
+        if (Number.isFinite(pct)) setRenderProgress(pct);
+
+        if (job?.status === "done") {
+          const result = job?.result || {};
+          const workspace = result.workspace || "PakDMS";
+          const layerName = result.layerName;
+          if (!layerName) throw new Error("Render finished without layerName");
+
+          setPreviousStoreName(result.storeName || jobId);
+          setWmsLayer({
+            workspace,
+            layerName,
+            bounds4326: result.bounds4326 || null,
+            opacity,
+          });
+
+          if (result.coverageStats) {
+            setCoverageStats(result.coverageStats);
+          }
+          setRenderProgress(100);
+          setRenderLoading(false);
+          return;
+        }
+
+        if (job?.status === "error") {
+          throw new Error(job?.error || "Server-side render failed");
+        }
+
+        if (Date.now() - startedAt > 10 * 60 * 1000) {
+          throw new Error("Render timed out");
+        }
+
+        // Wait a bit before next poll
+        // eslint-disable-next-line no-await-in-loop
+        await new Promise((r) => setTimeout(r, 650));
+      }
+    } catch (e) {
+      api.error({
+        message: "Render failed",
+        description: String(e?.message || e),
+        placement: "bottomRight",
+      });
+      setRenderLoading(false);
+    }
   };
 
   return (
@@ -1594,7 +1824,7 @@ function Forecast() {
                           }}
                           onClick={() => {
                             setSelectedIndex(item.key);
-                            setRaster(null);
+                            setWmsLayer(null);
                             setRenderProgress(0);
                           }}
                         >
@@ -1619,7 +1849,7 @@ function Forecast() {
                   }}
                   onClick={() => {
                     setSelectedIndex("ALERT");
-                    setRaster(null);
+                    setWmsLayer(null);
                     setRenderProgress(0);
                   }}
                 >
@@ -1654,6 +1884,25 @@ function Forecast() {
                 )}
 
                 {/* Date selector moved onto the map (next to Date label). */}
+              </div>
+
+              <div style={{ textAlign: "left" }}>
+                <Divider style={{ margin: "10px 0 8px" }} />
+                <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 4, color: darkmode ? "#fff" : "#000" }}>
+                  {selectedBoundaryLabel}
+                </div>
+                {selectedUnit || selectedDistrict || selectedTehsil ? (
+                  <div style={{ fontSize: 11, opacity: 0.85, marginBottom: 4, color: darkmode ? "#fff" : "#000" }}>
+                    {selectedUnit ? `Province: ${selectedUnit}` : null}
+                    {selectedDistrict ? `  |  District: ${selectedDistrict}` : null}
+                    {selectedTehsil ? `  |  Tehsil: ${selectedTehsil}` : null}
+                  </div>
+                ) : null}
+                {selectedFileName ? (
+                  <div style={{ fontSize: 11, opacity: 0.85, color: darkmode ? "#fff" : "#000" }}>
+                    File: {selectedFileName}
+                  </div>
+                ) : null}
               </div>
               <div>
                 <p className="sidebar-module">Opacity</p>
@@ -1769,6 +2018,10 @@ function Forecast() {
                 selectedDistrict={selectedDistrict}
                 selectedTehsil={selectedTehsil}
               />
+              <BoundaryOutlineLayer
+                geojson={clipGeojsonData || pakistanGeojsonData}
+                darkmode={darkmode}
+              />
               <NcValueOnClick ncMetaRef={ncMetaRef} selectedTime={selectedTime} />
               <LayersControl position="topleft">
                 <LayersControl.BaseLayer
@@ -1831,10 +2084,10 @@ function Forecast() {
                   />
                 </LayersControl.BaseLayer>
               </LayersControl>
-              {raster ? <NcRasterLayer raster={raster} /> : null}
+              {wmsLayer ? <NcWmsLayer layer={wmsLayer} /> : null}
               </MapContainer>
 
-              {raster ? (
+              {wmsLayer ? (
                 <div
                   style={{
                     width: "auto",
@@ -1848,7 +2101,7 @@ function Forecast() {
                 </div>
               ) : null}
 
-              {raster && coverageStats && statsOpen ? (
+              {wmsLayer && coverageStats && statsOpen ? (
                 <div
                   style={{
                     position: "fixed",

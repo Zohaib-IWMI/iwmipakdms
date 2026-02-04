@@ -79,7 +79,7 @@ function AddMask({ selectedUnit, selectedDistrict, selectedTehsil, unit } = {}) 
       } else if (selectedUnit) {
         // for a province-level selection use the `units` layer (name is province)
         baseUrl += "units";
-        baseUrl += `&CQL_FILTER=name='${selectedUnit}'`;
+        baseUrl += `&CQL_FILTER=name%20ILIKE%20'${selectedUnit}'`;
       }
 
       Axios.get(baseUrl)

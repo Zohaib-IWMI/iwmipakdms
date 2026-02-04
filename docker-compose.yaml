@@ -79,6 +79,11 @@ services:
       - CLIENT_ORIGIN=$CLIENT_ORIGIN
       - SERVICE_ACCOUNT=pakdms@ee-iwmipk.iam.gserviceaccount.com
       - PRIVATE_KEY_FILE=/etc/ee/ee-iwmipk-eb7018526b80.json
+      - FRONTEND_INTERNAL_URL=http://frontend
+      - GEOSERVER_INTERNAL_URL=http://geoserver:8080/geoserver
+      - GEOSERVER_WORKSPACE=PakDMS
+      - GEOSERVER_ADMIN_USER=admin
+      - GEOSERVER_ADMIN_PASSWORD=geoserver
     networks:
       - backend
       - frontend

@@ -121,10 +121,15 @@ FROM node:20-alpine as build-stage
 
 WORKDIR /frontend
 COPY package.json ./
-#RUN npm install
-# RUN --mount=type=cache,target=/root/.npm npm install
-# COPY ./.npmrc ~/.npmrc
-RUN npm install
+# Resilient install (network hiccups are common in CI/build hosts)
+RUN npm config set fund false \
+ && npm config set audit false \
+ && npm config set fetch-retries 5 \
+ && npm config set fetch-retry-mintimeout 20000 \
+ && npm config set fetch-retry-maxtimeout 120000 \
+ && npm config set registry https://registry.npmjs.org/
+
+RUN --mount=type=cache,target=/root/.npm npm install --no-audit --no-fund --prefer-offline
 COPY . .
 
 # Copy converted *_classic.nc files from conversion stage
