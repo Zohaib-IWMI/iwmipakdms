@@ -162,6 +162,40 @@ def _clip_geotiff(src_tif: str, dst_tif: str, clip_geojson: Dict[str, Any], noda
 
     with rasterio.open(src_tif) as src:
         if geoms:
+            # District/tehsil boundaries can be extremely detailed (many vertices), which makes
+            # rasterize/mask slow. Simplify geometries to ~pixel tolerance to speed up clipping
+            # without changing the visual result at raster resolution.
+            try:
+                from shapely.geometry import mapping, shape
+                from shapely.ops import unary_union
+
+                px = float(abs(getattr(src.transform, "a", 0.0)) or 0.0)
+                py = float(abs(getattr(src.transform, "e", 0.0)) or 0.0)
+                pixel = max(px, py) or 0.01
+                factor = float(os.getenv("FORECAST_CLIP_SIMPLIFY_FACTOR", "1.0") or "1.0")
+                tol = max(0.0, pixel * max(0.0, factor))
+
+                shp_list = []
+                for g in geoms:
+                    if not g:
+                        continue
+                    try:
+                        shp_list.append(shape(g))
+                    except Exception:
+                        continue
+
+                if shp_list:
+                    merged = unary_union(shp_list)
+                    if not merged.is_empty:
+                        if not merged.is_valid:
+                            merged = merged.buffer(0)
+                        if tol > 0:
+                            merged = merged.simplify(tol, preserve_topology=True)
+                        geoms = [mapping(merged)]
+            except Exception:
+                # If shapely isn't available or simplification fails, fall back to original geometry.
+                pass
+
             out_image, out_transform = mask(src, geoms, crop=True, nodata=nodata, filled=True)
             out_meta = src.meta.copy()
             out_meta.update({

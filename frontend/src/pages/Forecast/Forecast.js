@@ -1494,6 +1494,7 @@ function Forecast() {
         wfs.searchParams.set("request", "GetFeature");
         wfs.searchParams.set("typeName", typeName);
         wfs.searchParams.set("outputFormat", "application/json");
+        wfs.searchParams.set("srsName", "EPSG:4326");
         if (CQL_FILTER) wfs.searchParams.set("CQL_FILTER", CQL_FILTER);
         clipUrl = wfs.toString();
       } else {
@@ -1898,11 +1899,6 @@ function Forecast() {
                     {selectedTehsil ? `  |  Tehsil: ${selectedTehsil}` : null}
                   </div>
                 ) : null}
-                {selectedFileName ? (
-                  <div style={{ fontSize: 11, opacity: 0.85, color: darkmode ? "#fff" : "#000" }}>
-                    File: {selectedFileName}
-                  </div>
-                ) : null}
               </div>
               <div>
                 <p className="sidebar-module">Opacity</p>
@@ -2004,7 +2000,7 @@ function Forecast() {
                 >
                   {loading
                     ? "Loading NetCDF..."
-                    : `Rendering ${renderProgress}%`}
+                    : `Loading ${renderProgress}%`}
                 </div>
               )}
               <MapContainer

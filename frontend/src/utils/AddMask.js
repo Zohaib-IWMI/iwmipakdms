@@ -68,7 +68,7 @@ function AddMask({ selectedUnit, selectedDistrict, selectedTehsil, unit } = {}) 
     // If explicit selection provided, request matching geometry from GeoServer
     if (selectedTehsil || selectedDistrict || selectedUnit) {
       let baseUrl =
-        "../geoserver/ows?service=WFS&version=1.0.0&request=GetFeature&outputFormat=application/json&typeName=PakDMS:";
+        "../geoserver/ows?service=WFS&version=1.0.0&request=GetFeature&outputFormat=application/json&srsName=EPSG:4326&typeName=PakDMS:";
 
       if (selectedTehsil) {
         baseUrl += "tehsils";
@@ -113,7 +113,7 @@ function AddMask({ selectedUnit, selectedDistrict, selectedTehsil, unit } = {}) 
       let baseUrl =
         "../geoserver/ows?service=WFS&version=1.0.0&request=GetFeature&typeName=PakDMS%3A" +
         adminUnit +
-        "&outputFormat=application%2Fjson";
+        "&outputFormat=application%2Fjson&srsName=EPSG:4326";
       if (admin1 && !admin2) baseUrl += "&CQL_FILTER=name='" + admin1Name + "'";
       if (admin2 && admin2) baseUrl += "&CQL_FILTER=name='" + admin2Name + "'";
       Axios.get(baseUrl).then((resp) => {
