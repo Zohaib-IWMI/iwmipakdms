@@ -21,6 +21,13 @@ const activeDataProcesses = new Map();
 // Forecast render jobs (NetCDF -> GeoTIFF -> GeoServer)
 const activeForecastJobs = new Map();
 
+function truncateLog(text, maxLen = 1500) {
+  if (!text) return "";
+  const s = String(text);
+  if (s.length <= maxLen) return s;
+  return s.slice(0, maxLen) + `... (truncated, total=${s.length})`;
+}
+
 function buildAssetUrl({ assetUrl, assetPath }) {
   if (assetUrl && typeof assetUrl === "string" && /^https?:\/\//i.test(assetUrl)) {
     return assetUrl;
@@ -256,6 +263,12 @@ app.post("/getdata", (req, res) => {
 
   pythonProcess.on("close", (code) => {
     console.log(`/getdata python process closed requestId=${requestId} code=${code} stdout_len=${d.length} stderr_len=${e.length}`);
+
+    // If python produced no stdout but has stderr, print a snippet to aid debugging.
+    if ((!d || d.trim() === "") && e && e.trim() !== "") {
+      console.error(`[getdata stderr] requestId=${requestId} ` + truncateLog(e));
+    }
+
     // Remove process from active processes when done
     activeDataProcesses.delete(requestId);
 

@@ -65,21 +65,31 @@ function AddMask({ selectedUnit, selectedDistrict, selectedTehsil, unit } = {}) 
     // Always keep outside-Pakistan blank
     doPakistanMask();
 
+    const escapeCqlLiteral = (value) => String(value ?? "").replace(/'/g, "''");
+
     // If explicit selection provided, request matching geometry from GeoServer
     if (selectedTehsil || selectedDistrict || selectedUnit) {
       let baseUrl =
         "../geoserver/ows?service=WFS&version=1.0.0&request=GetFeature&outputFormat=application/json&srsName=EPSG:4326&typeName=PakDMS:";
 
+      let cqlFilter = null;
+
       if (selectedTehsil) {
         baseUrl += "tehsils";
-        baseUrl += `&CQL_FILTER=district='${selectedDistrict}' AND name='${selectedTehsil}'`;
+        cqlFilter = `district ILIKE '${escapeCqlLiteral(
+          selectedDistrict
+        )}' AND name ILIKE '${escapeCqlLiteral(selectedTehsil)}'`;
       } else if (selectedDistrict) {
         baseUrl += "districts";
-        baseUrl += `&CQL_FILTER=name='${selectedDistrict}'`;
+        cqlFilter = `name ILIKE '${escapeCqlLiteral(selectedDistrict)}'`;
       } else if (selectedUnit) {
         // for a province-level selection use the `units` layer (name is province)
         baseUrl += "units";
-        baseUrl += `&CQL_FILTER=name%20ILIKE%20'${selectedUnit}'`;
+        cqlFilter = `name ILIKE '${escapeCqlLiteral(selectedUnit)}'`;
+      }
+
+      if (cqlFilter) {
+        baseUrl += `&CQL_FILTER=${encodeURIComponent(cqlFilter)}`;
       }
 
       Axios.get(baseUrl)

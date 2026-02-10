@@ -318,20 +318,20 @@ const LEGENDS = {
   ALERT: {
     title: "Alert Drought",
     stops: [
-      { label: "Normal", range: "(0)", color: "#2E7D32" },
-      { label: "Watch", range: "(1)", color: "#F9A825" },
-      { label: "Alert", range: "(2)", color: "#EF6C00" },
-      { label: "Warning", range: "(3)", color: "#C62828" },
-      { label: "Emergency", range: "(4)", color: "#7F0000" },
+      { label: "Normal", range: "(0)", color: "#F9F6EE" },
+      { label: "Watch", range: "(1)", color: "#fff9ae" },
+      { label: "Alert", range: "(2)", color: "#F9A825" },
+      { label: "Warning", range: "(3)", color: "#EF6C00" },
+      { label: "Emergency", range: "(4)", color: "#C62828" },
     ],
     getColor: (v) => {
       if (!Number.isFinite(v)) return null;
       const k = Math.round(v);
-      if (k <= 0) return "#2E7D32";
-      if (k === 1) return "#F9A825";
-      if (k === 2) return "#EF6C00";
-      if (k === 3) return "#C62828";
-      return "#7F0000";
+      if (k <= 0) return "#F9F6EE";
+      if (k === 1) return "#fff9ae";
+      if (k === 2) return "#F9A825";
+      if (k === 3) return "#EF6C00";
+      return "#C62828";
     },
   },
 };

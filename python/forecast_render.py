@@ -456,11 +456,11 @@ def _sld_for_index(index_key: str) -> Tuple[str, str]:
         entries = [
             ("-9999", "#000000", "No data", "0"),
             # Frontend legend rounds values (Math.round). We approximate with mid-point breaks.
-            ("0.499999", "#2E7D32", "Normal", "1"),
-            ("1.499999", "#F9A825", "Watch", "1"),
-            ("2.499999", "#EF6C00", "Alert", "1"),
-            ("3.499999", "#C62828", "Warning", "1"),
-            ("9999", "#7F0000", "Emergency", "1"),
+            ("0.499999", "#F9F6EE", "Normal", "1"),
+            ("1.499999", "#fff9ae", "Watch", "1"),
+            ("2.499999", "#F9A825", "Alert", "1"),
+            ("3.499999", "#EF6C00", "Warning", "1"),
+            ("9999", "#C62828", "Emergency", "1"),
         ]
         cmap_type = "intervals"
 

@@ -150,9 +150,21 @@ function EarthEngine(props) {
           return;
         }
 
-        // Check if we have data and it's not empty
+        // If the server returned an error message, surface it first
+        if (response && response.data && response.data.error) {
+          const surveyKeywords = ['survey', 'feedback', 'satisfaction', 'qualtrics'];
+          const containsSurvey = surveyKeywords.some(keyword =>
+            response.data.error.toLowerCase().includes(keyword.toLowerCase())
+          );
+          if (!containsSurvey) {
+            error(response.data.error);
+            loading(false);
+            return;
+          }
+        }
+
+        // Now check if we have data and it's not empty
         if (response && response.data) {
-          // Check if we have valid data first
           if (!response.data.data || response.data.data.trim() === "") {
             error("Data unavailable for selected analysis period");
             loading(false);
@@ -166,23 +178,6 @@ function EarthEngine(props) {
             return;
           }
 
-          // Only check for errors if we don't have valid data
-          // This handles the case where Google Earth Engine includes survey messages in error field
-          // but still provides valid data
-          if (response.data.error && (!response.data.data || response.data.data.trim() === "")) {
-            // Filter out survey-related errors
-            const surveyKeywords = ['survey', 'feedback', 'satisfaction', 'qualtrics'];
-            const containsSurvey = surveyKeywords.some(keyword =>
-              response.data.error.toLowerCase().includes(keyword.toLowerCase())
-            );
-
-            if (!containsSurvey) {
-              error(response.data.error);
-              loading(false);
-              return;
-            }
-          }
-
           try {
             const jsonData = JSON.parse(response.data.data);
             const { mapid } = jsonData;
@@ -191,7 +186,6 @@ function EarthEngine(props) {
             if (props.onProgressUpdate) props.onProgressUpdate(100);
             loading(false);
           } catch (jsonError) {
-
             error("Error parsing data from server: " + jsonError.message);
             loading(false);
           }
@@ -201,9 +195,6 @@ function EarthEngine(props) {
               props.onProgressUpdate(0);
             }
           };
-        } else {
-          error("Data unavailable for selected analysis period");
-          loading(false);
         }
       } catch (err) {
         if (!isMounted) {
@@ -263,7 +254,15 @@ function EarthEngine(props) {
   ]);
 
   if (data) {
-    return <TileLayer url={data} opacity={opac} />;
+    return (
+      <TileLayer
+        key={data}
+        url={data}
+        opacity={opac}
+        maxZoom={27}
+        zIndex={1000}
+      />
+    );
   } else {
     return null;
   }

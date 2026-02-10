@@ -67,6 +67,10 @@ graphoption = args.graphoption
 max_value = args.max
 min_value = args.min
 
+# Normalize missing/empty boundaryselect values (frontend may omit this field)
+if boundaryselect is None or str(boundaryselect).strip() == '' or str(boundaryselect).lower() == 'null':
+    boundaryselect = "0"
+
 connection = psycopg2.connect(user="iwmi",
                                     password="72342",
                                     host="spatialdb",
@@ -109,18 +113,33 @@ try:
     if cache_key in cache:
         print(cache[cache_key])  # Retrieve and print cached result
     else:
-        # Redirect JSON output of getIndice to a variable
+        # Redirect JSON output of getIndice to a variable.
+        # IMPORTANT: always restore stdout even if getIndice raises.
         old_stdout = sys.stdout
-        sys.stdout = temp_stdout = io.StringIO()
-
-        getIndice(startmonth, endmonth, startyear, endyear, wkt_string,
-                  aggr, indice, calctype, precipitation, months, graphoption, min_value, max_value)
+        temp_stdout = io.StringIO()
+        try:
+            sys.stdout = temp_stdout
+            getIndice(
+                startmonth,
+                endmonth,
+                startyear,
+                endyear,
+                wkt_string,
+                aggr,
+                indice,
+                calctype,
+                precipitation,
+                months,
+                graphoption,
+                min_value,
+                max_value,
+            )
+        finally:
+            sys.stdout = old_stdout  # Restore original stdout
 
         result = temp_stdout.getvalue()
-        sys.stdout = old_stdout  # Restore original stdout
-
         cache[cache_key] = result  # Cache the result
-        print(result)    
+        print(result)
 except (Exception, psycopg2.Error) as error:
     print("Error: ", error)
 

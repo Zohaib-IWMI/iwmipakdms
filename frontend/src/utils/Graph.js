@@ -80,7 +80,20 @@ function Graph(props) {
         },
       })
         .then(function (response) {
-          if (response) {
+            if (response) {
+            // If server returned an explicit error, show it unless it's a survey message
+            if (response.data && response.data.error) {
+              const surveyKeywords = ['survey', 'feedback', 'satisfaction', 'qualtrics'];
+              const containsSurvey = surveyKeywords.some(keyword =>
+                response.data.error.toLowerCase().includes(keyword.toLowerCase())
+              );
+              if (!containsSurvey) {
+                error(response.data.error);
+                loading(false);
+                return;
+              }
+            }
+
             if (!response.data.data || response.data.data.trim() === "") {
               error("Data unavailable for selected analysis period");
               loading(false);
@@ -88,21 +101,6 @@ function Graph(props) {
               error(response.data.data);
               loading(false);
             } else {
-              // Check for errors only if we don't have valid data
-              if (response.data.error && (!response.data.data || response.data.data.trim() === "")) {
-                // Filter out survey-related errors
-                const surveyKeywords = ['survey', 'feedback', 'satisfaction', 'qualtrics'];
-                const containsSurvey = surveyKeywords.some(keyword =>
-                  response.data.error.toLowerCase().includes(keyword.toLowerCase())
-                );
-
-                if (!containsSurvey) {
-                  error(response.data.error);
-                  loading(false);
-                  return;
-                }
-              }
-
               setData(JSON.parse(response.data.data));
               loading(false);
             }

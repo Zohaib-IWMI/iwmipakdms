@@ -297,12 +297,32 @@ def getIndice(analysis_startmonth, analysis_endmonth, analysis_startyear, analys
                 ]
             }
         case 'SMCI_SMAP':
-            fldas = ee.ImageCollection(
-                    'NASA/SMAP/SPL4SMGP/008').filterDate(analysis_startdate,analysis_enddate.advance(1, 'month')).filterBounds(geometry)
-            fldas = monthlyMean(fldas)
-            soil = fldas.select('sm_surface')
-            soil = soil.map(add_smci_smap_band)
-            img_collection = soil.select(indice)
+            # Load the SMAP collection (daily/near-daily) and aggregate
+            # daily values into one monthly mean per year-month, then
+            # compute SMCI from the monthly mean.
+            smap_daily = ee.ImageCollection('NASA/SMAP/SPL4SMGP/008')
+            smap_daily = smap_daily.filterBounds(geometry)
+
+            # Build monthly mean collection from the (potentially) daily SMAP images.
+            def get_monthly_from_daily(image_collection):
+                start = ee.Date(image_collection.first().get('system:time_start'))
+                end = ee.Date(image_collection.sort('system:time_start', False).first().get('system:time_start'))
+                date_list = ee.List.sequence(0, end.difference(start, 'month').subtract(1))
+
+                def monthly_mean_fn(month_offset):
+                    month_start = start.advance(month_offset, 'month')
+                    month_end = month_start.advance(1, 'month')
+                    monthly_mean = image_collection.filterDate(month_start, month_end).mean()
+                    return monthly_mean.set('system:time_start', month_start.millis()) \
+                                       .set('month', month_start.get('month')) \
+                                       .set('year', month_start.get('year'))
+
+                return ee.ImageCollection(date_list.map(monthly_mean_fn))
+
+            smap = get_monthly_from_daily(smap_daily).filterDate(analysis_startdate, analysis_enddate.advance(1, 'month'))
+            smap = smap.select('sm_surface')
+            smap = smap.map(add_smci_smap_band)
+            img_collection = smap.select(indice)
             indiceVis = {
                 'min': 0.1,
                 'max': 0.4,
@@ -378,21 +398,31 @@ def getIndice(analysis_startmonth, analysis_endmonth, analysis_startyear, analys
                 ]
             }
         case 'NDVI_Anamoly':
-            ndvi = ee.ImageCollection(
-                    'MODIS/061/MOD13A1').filterDate(analysis_startdate,analysis_enddate.advance(1, 'month')).filterBounds(geometry)
-            ndvi = monthlyMean(ndvi)
-            ndvi = ndvi.select('NDVI')
-            ndvi = ndvi.map(add_ndvi_anamoly_band)
-            img_collection = ndvi.select(indice)
+            # Use MODIS MOD13Q1 NDVI (250 m) for reliable coverage
+            ndvi_modis = ee.ImageCollection('MODIS/061/MOD13Q1') \
+                .filterDate(analysis_startdate, analysis_enddate.advance(1, 'month')) \
+                .filterBounds(geometry)
+
+            # Get monthly means first
+            ndvi_monthly = monthlyMean(ndvi_modis)
+
+            # Select only NDVI band (keeps MODIS native scale 0-10000)
+            ndvi_monthly = ndvi_monthly.select('NDVI')
+
+            # Compute anomaly using climatology (ndvi_mean/ndvi_std are at MODIS scale)
+            ndvi_anom = ndvi_monthly.map(add_ndvi_anamoly_band)
+            img_collection = ndvi_anom.select(indice)
+
+            # Use green->red ordering for display (normal -> extreme)
             indiceVis = {
-                'min': -0.5,
-                'max': 0,
+                'min': -2.0,
+                'max': 2.0,
                 'palette': [
-                    'FF0000',    # Extreme: Red
-                    'FFA500',    # Severe: Orange
-                    'FFFF00',    # Moderate: Yellow
-                    '008000',    # Mild: Green
-                    '006400'     # No drought: Dark Green
+                    'FF0000',     # Extreme: Red (very low NDVI = severe stress)
+                    'FFA500',     # Severe: Orange
+                    'FFFF00',     # Moderate: Yellow
+                    '90EE90',     # Mild: Light Green
+                    '006400'      # No drought: Dark Green (high NDVI = healthy)
                 ]
             }
         case 'MAI':
@@ -600,48 +630,45 @@ def getIndice(analysis_startmonth, analysis_endmonth, analysis_startyear, analys
                 ]
             }
         case 'RDI_WAPOR':
-            # Combined RDI ImageCollection creation
+            # Create three dekadal images per month by repeating the monthly
+            # files with dekad timestamps (D1=day1, D2=day11, D3=day21).
             rdi_image_list = []
 
-            for year in range(analysis_startyear, analysis_endyear + 1):  # From 2018 to 2024
-                for month in range(1, 13):  # From January to December
-                    # Format the month with zero-padding
+            for year in range(analysis_startyear, analysis_endyear + 1):
+                for month in range(1, 13):
                     month_formatted = f"{month:02d}"
-                    
-                    # Precipitation file path
                     prec_image_path = (f"gs://fao-gismgr-wapor-3-data/DATA/WAPOR-3/"
                                        f"MAPSET/L1-PCP-M/WAPOR-3.L1-PCP-M.{year}-{month_formatted}.tif")
-                    # Reference evapotranspiration file path
                     ret_image_path = (f"gs://fao-gismgr-wapor-3-data/DATA/WAPOR-3/"
                                       f"MAPSET/L1-RET-M/WAPOR-3.L1-RET-M.{year}-{month_formatted}.tif")
-                    
-                    # Load the precipitation image
-                    prec_image = ee.Image.loadGeoTIFF(prec_image_path).set({
-                        'system:time_start': ee.Date.fromYMD(year, month, 1).millis(),
-                        'year': year,
-                        'month': month
-                    })
-                    
-                    # Load the reference evapotranspiration image
-                    ret_image = ee.Image.loadGeoTIFF(ret_image_path).set({
-                        'system:time_start': ee.Date.fromYMD(year, month, 1).millis(),
-                        'year': year,
-                        'month': month
-                    })
-                    
-                    # Calculate RDI (precipitation/reference evapotranspiration)
-                    rdi_image = prec_image.divide(ret_image).set({
-                        'system:time_start': ee.Date.fromYMD(year, month, 1).millis(),
-                        'year': year,
-                        'month': month
-                    })
-                    
-                    # Add the RDI image to the list
-                    rdi_image_list.append(rdi_image)
 
-            # Create an ImageCollection for RDI
-            rdi_collection = ee.ImageCollection(rdi_image_list)  
-            rdi_collection = rdi_collection.filterDate(analysis_startdate,analysis_enddate.advance(1, 'month')).filterBounds(geometry)
+                    # repeat monthly file for dekads 1..3 with adjusted timestamps
+                    for dekad in range(1, 4):
+                        # load monthly images (same file) and set dekad timestamp
+                        prec_image = ee.Image.loadGeoTIFF(prec_image_path).set({
+                            'system:time_start': ee.Date.fromYMD(year, month, 1).advance((dekad - 1) * 10, 'day').millis(),
+                            'year': year,
+                            'month': month,
+                            'dekad': dekad
+                        })
+                        ret_image = ee.Image.loadGeoTIFF(ret_image_path).set({
+                            'system:time_start': ee.Date.fromYMD(year, month, 1).advance((dekad - 1) * 10, 'day').millis(),
+                            'year': year,
+                            'month': month,
+                            'dekad': dekad
+                        })
+
+                        rdi_image = prec_image.divide(ret_image).set({
+                            'system:time_start': ee.Date.fromYMD(year, month, 1).advance((dekad - 1) * 10, 'day').millis(),
+                            'year': year,
+                            'month': month,
+                            'dekad': dekad
+                        })
+
+                        rdi_image_list.append(rdi_image)
+
+            rdi_collection = ee.ImageCollection(rdi_image_list)
+            rdi_collection = rdi_collection.filterDate(analysis_startdate, analysis_enddate.advance(1, 'month')).filterBounds(geometry)
             rdi_collection = monthlyMean(rdi_collection)
             rdi = rdi_collection.map(add_rdi_band)
             img_collection = rdi.select(indice)
@@ -658,48 +685,42 @@ def getIndice(analysis_startmonth, analysis_endmonth, analysis_startyear, analys
                 ]
             }
         case 'ESI_WAPOR':
-            # Combined RDI ImageCollection creation
+            # Create three dekadal images per month by repeating monthly files
             esi_image_list = []
 
-            for year in range(analysis_startyear, analysis_endyear + 1):  # From 2018 to 2024
-                for month in range(1, 13):  # From January to December
-                    # Format the month with zero-padding
+            for year in range(analysis_startyear, analysis_endyear + 1):
+                for month in range(1, 13):
                     month_formatted = f"{month:02d}"
-                    
-                    # Precipitation file path
                     aet_image_path = (f"gs://fao-gismgr-wapor-3-data/DATA/WAPOR-3/"
                                       f"MAPSET/L1-AETI-M/WAPOR-3.L1-AETI-M.{year}-{month_formatted}.tif")
-                    # Reference evapotranspiration file path
                     ret_image_path = (f"gs://fao-gismgr-wapor-3-data/DATA/WAPOR-3/"
                                       f"MAPSET/L1-RET-M/WAPOR-3.L1-RET-M.{year}-{month_formatted}.tif")
-                    
-                    # Load the precipitation image
-                    aet_image = ee.Image.loadGeoTIFF(aet_image_path).set({
-                        'system:time_start': ee.Date.fromYMD(year, month, 1).millis(),
-                        'year': year,
-                        'month': month
-                    })
-                    
-                    # Load the reference evapotranspiration image
-                    ret_image = ee.Image.loadGeoTIFF(ret_image_path).set({
-                        'system:time_start': ee.Date.fromYMD(year, month, 1).millis(),
-                        'year': year,
-                        'month': month
-                    })
-                    
-                    # Calculate RDI (precipitation/reference evapotranspiration)
-                    esi_image = aet_image.divide(ret_image).set({
-                        'system:time_start': ee.Date.fromYMD(year, month, 1).millis(),
-                        'year': year,
-                        'month': month
-                    })
-                    
-                    # Add the RDI image to the list
-                    esi_image_list.append(esi_image)
 
-            # Create an ImageCollection for ESI
-            esi_collection = ee.ImageCollection(esi_image_list) 
-            esi_collection = esi_collection.filterDate(analysis_startdate,analysis_enddate.advance(1, 'month')).filterBounds(geometry)
+                    for dekad in range(1, 4):
+                        aet_image = ee.Image.loadGeoTIFF(aet_image_path).set({
+                            'system:time_start': ee.Date.fromYMD(year, month, 1).advance((dekad - 1) * 10, 'day').millis(),
+                            'year': year,
+                            'month': month,
+                            'dekad': dekad
+                        })
+                        ret_image = ee.Image.loadGeoTIFF(ret_image_path).set({
+                            'system:time_start': ee.Date.fromYMD(year, month, 1).advance((dekad - 1) * 10, 'day').millis(),
+                            'year': year,
+                            'month': month,
+                            'dekad': dekad
+                        })
+
+                        esi_image = aet_image.divide(ret_image).set({
+                            'system:time_start': ee.Date.fromYMD(year, month, 1).advance((dekad - 1) * 10, 'day').millis(),
+                            'year': year,
+                            'month': month,
+                            'dekad': dekad
+                        })
+
+                        esi_image_list.append(esi_image)
+
+            esi_collection = ee.ImageCollection(esi_image_list)
+            esi_collection = esi_collection.filterDate(analysis_startdate, analysis_enddate.advance(1, 'month')).filterBounds(geometry)
             esi_collection = monthlyMean(esi_collection)
             esi = esi_collection.map(add_esi_band)
             img_collection = esi.select(indice)
@@ -716,28 +737,24 @@ def getIndice(analysis_startmonth, analysis_endmonth, analysis_startyear, analys
             }
         case 'NPP_Anamoly_WAPOR':
             image_list = []
-            for year in range(analysis_startyear, analysis_endyear+1):  # From 2009 to 2024
-                for month in range(1, 13):  # From January to December
-                    # Format the month with zero-padding
+            for year in range(analysis_startyear, analysis_endyear+1):
+                for month in range(1, 13):
                     month_formatted = f"{month:02d}"
-                    # Construct the file path
                     image_path = (f"gs://fao-gismgr-wapor-3-data/DATA/WAPOR-3/"
                                   f"MAPSET/L2-NPP-M/WAPOR-3.L2-NPP-M.{year}-{month_formatted}.tif")
-                    
-                    # Load the image and set properties
-                    image = ee.Image.loadGeoTIFF(image_path).set({
-                        'system:time_start': ee.Date.fromYMD(year, month, 1).millis(),
-                        'year': year,
-                        'month': month
-                    })
-                    
-                    # Add the image to the list
-                    image_list.append(image)
 
-            # Create an ImageCollection from the list of images
+                    for dekad in range(1, 4):
+                        image = ee.Image.loadGeoTIFF(image_path).set({
+                            'system:time_start': ee.Date.fromYMD(year, month, 1).advance((dekad - 1) * 10, 'day').millis(),
+                            'year': year,
+                            'month': month,
+                            'dekad': dekad
+                        })
+                        image_list.append(image)
+
             image_collection = ee.ImageCollection(image_list)
 
-            npp_collection = image_collection.filterDate(analysis_startdate,analysis_enddate.advance(1, 'month')).filterBounds(geometry)
+            npp_collection = image_collection.filterDate(analysis_startdate, analysis_enddate.advance(1, 'month')).filterBounds(geometry)
             npp_collection = monthlyMean(npp_collection)
             npp = npp_collection.map(add_npp_anamoly_band)
             img_collection = npp.select(indice)
@@ -891,7 +908,10 @@ def getIndice(analysis_startmonth, analysis_endmonth, analysis_startyear, analys
 
     if(indice in ['TCI','VHI']):
         scale = 1000
-    elif(indice in ['VCI','NDVI_Anamoly','MAI','NDWI','CWD']):
+    elif(indice == 'NDVI_Anamoly'):
+        # MODIS MOD13Q1 NDVI -> 250 m
+        scale = 250
+    elif(indice in ['VCI','MAI','NDWI','CWD']):
         scale = 500
     elif(indice in ['SMCI_FLDAS','PCI','DrySpell','SPI_ERA5L','SMCI_SMAP']):
         scale = 11132
@@ -902,14 +922,7 @@ def getIndice(analysis_startmonth, analysis_endmonth, analysis_startyear, analys
     elif(indice in ['RET']):
         scale = 30000
 
-    worldcover = ee.ImageCollection("ESA/WorldCover/v200").first()
-    classes_to_mask = [50, 60, 70, 80, 90]
-    mask = worldcover.remap(classes_to_mask, [-9999] * len(classes_to_mask), 1)
-    def mask_image(image):
-        binary_mask = mask.neq(-9999)
-        return image.updateMask(mask)
-    if(indice == 'NDVI_Anamoly'):
-        img_collection = img_collection.map(mask_image)
+    # No masking for NDVI - show all land areas for vegetation monitoring
     #if(indice not in ['DrySpell','PCI','SPI_ERA5L', 'SPI_CHIRPS']):
     #    img_collection = img_collection.map(mask_image)
     # if(indice!='DrySpell'):
@@ -918,9 +931,27 @@ def getIndice(analysis_startmonth, analysis_endmonth, analysis_startyear, analys
     #     img_collection = img_collection.updateMask(mask)
     img_out, data_list = reducerCase(img_collection, indice)
     img_out = img_out.reproject(crs='EPSG:3857',scale=scale)
-    img_url = img_out.getMapId(indiceVis)['tile_fetcher'].url_format
-    dict = img_out.getMapId(indiceVis)
-    dict.update(indiceVis)
+    map_dict = img_out.getMapId(indiceVis)
+    # Frontend expects a full XYZ tile URL template (with {z}/{x}/{y}).
+    # ee.Image.getMapId returns a dict that includes a TileFetcher object at 'tile_fetcher'.
+    img_url = None
+    if isinstance(map_dict, dict):
+        tile_fetcher = map_dict.get('tile_fetcher')
+        # Newer ee python API: TileFetcher object with url_format attribute
+        if tile_fetcher is not None and hasattr(tile_fetcher, 'url_format'):
+            img_url = tile_fetcher.url_format
+        # Defensive: some environments may serialize tile_fetcher as dict
+        elif isinstance(tile_fetcher, dict):
+            img_url = tile_fetcher.get('url_format')
+
+        # Last-resort: build URL from mapid+token (still works for XYZ tiles)
+        if not img_url:
+            mapid = map_dict.get('mapid')
+            token = map_dict.get('token')
+            if mapid and token:
+                img_url = f"https://earthengine.googleapis.com/v1alpha/{mapid}/tiles/{{z}}/{{x}}/{{y}}?token={token}"
+
+        map_dict.update(indiceVis)
     if calctype == "map":
         # Build stepped legend metadata for specific drought indices (Option A)
         drought_indices_for_step_legend = [
@@ -952,12 +983,12 @@ def getIndice(analysis_startmonth, analysis_endmonth, analysis_startyear, analys
                     legend = {
                         'isDiscrete': True,
                         'labels': labels,
-                        'colors': dict.get('palette', []),
+                        'colors': map_dict.get('palette', []),
                         'breaks': breaks
                     }
                 else:
-                    min_val = float(dict['min']) if dict.get('min') is not None else None
-                    max_val = float(dict['max']) if dict.get('max') is not None else None
+                    min_val = float(map_dict['min']) if map_dict.get('min') is not None else None
+                    max_val = float(map_dict['max']) if map_dict.get('max') is not None else None
                     if min_val is not None and max_val is not None and max_val >= min_val:
                         step = (max_val - min_val) / 5.0 if max_val != min_val else 0
                         breaks = [min_val + step * i for i in range(6)]
@@ -968,17 +999,17 @@ def getIndice(analysis_startmonth, analysis_endmonth, analysis_startyear, analys
                     legend = {
                         'isDiscrete': True,
                         'labels': labels,
-                        'colors': dict.get('palette', []),
+                        'colors': map_dict.get('palette', []),
                         'breaks': breaks
                     }
         except Exception:
             legend = None
 
-        response = {'mapid': img_url, 'min': dict['min'], 'max': dict['max'], 'palette': dict['palette']}
+        response = {'mapid': img_url, 'min': map_dict['min'], 'max': map_dict['max'], 'palette': map_dict['palette']}
         if legend is not None:
             response['legend'] = legend
         print(json.dumps(response))
     else:
         data = ee.List(data_list).getInfo()
-        print(json.dumps({'mapid': data, 'min': dict['min'],
-                          'max': dict['max']}))
+        print(json.dumps({'mapid': data, 'min': map_dict['min'],
+                          'max': map_dict['max']}))
