@@ -35,7 +35,7 @@ import { useDispatch, useSelector } from "react-redux";
 import { useNavigate } from "react-router-dom";
 import dayjs from "dayjs";
 import L from "leaflet";
-import NetCDFReader from "netcdfjs";
+// NetCDF parsing is done server-side (NetCDF4 supported via xarray).
 import Axios from "axios";
 import turfBuffer from "@turf/buffer";
 
@@ -63,11 +63,7 @@ const contentStyle = {
   background: "#fff",
 };
 
-const classicNcContext = require.context(
-  "../../ncreader/nc_files",
-  false,
-  /_classic\.nc$/
-);
+const ncContext = require.context("../../ncreader/nc_files", false, /\.nc$/i);
 
 function isProbablyLon360(lonData) {
   if (!lonData || lonData.length < 2) return false;
@@ -219,10 +215,10 @@ function parseMonthFromFilename(filename) {
   return Number.isFinite(month) ? month : null;
 }
 
-function buildClassicFileOptionsByIndex() {
-  const files = classicNcContext.keys().map((key) => {
+function buildNcFileOptionsByIndex() {
+  const files = ncContext.keys().map((key) => {
     const filename = key.replace(/^\.\//, "");
-    const url = classicNcContext(key);
+    const url = ncContext(key);
     const month = parseMonthFromFilename(filename);
     const upper = filename.toUpperCase();
     const indexType = upper.includes(".SPI.")
@@ -252,7 +248,7 @@ function buildClassicFileOptionsByIndex() {
   });
 
   // ALERT should come from a single file (all lead months/time steps inside it).
-  // Prefer the Alert_drought_classic.nc variant when multiple exist.
+  // Prefer the Alert_drought.nc variant when multiple exist.
   if (byIndex.ALERT.length > 1) {
     const preferred = byIndex.ALERT.find((o) =>
       String(o.meta?.filename || "").toUpperCase().includes("ALERT_DROUGHT")
@@ -276,7 +272,7 @@ function buildClassicFileOptionsByIndex() {
   return byIndex;
 }
 
-const classicOptionsByIndex = buildClassicFileOptionsByIndex();
+const classicOptionsByIndex = buildNcFileOptionsByIndex();
 
 const LEGENDS = {
   SPI: {
@@ -795,91 +791,75 @@ function findNearestIndex(values, target) {
   return Math.abs(lowVal - target) <= Math.abs(highVal - target) ? low : high;
 }
 
-function NcValueOnClick({ ncMetaRef, selectedTime }) {
+function WmsValueOnClick({ layer }) {
   const map = useMapEvents({
-    click: (e) => {
-      const meta = ncMetaRef?.current;
-      if (!meta) return;
-      const {
-        dataVar,
-        dataValues,
-        latData,
-        lonData,
-        dimensionSizes,
-        latDimId,
-        lonDimId,
-        timeDimId,
-        dataUnits,
-      } = meta;
+    click: async (e) => {
+      if (!layer?.layerName) return;
+      try {
+        const workspace = layer.workspace || "PakDMS";
+        const baseUrl = `../geoserver/${workspace}/wms`;
 
-      if (!dataVar || !dataValues || !latData || !lonData) return;
-      const dims = Array.isArray(dataVar.dimensions) ? dataVar.dimensions : [];
-      const latPos = latDimId == null ? -1 : dims.indexOf(latDimId);
-      const lonPos = lonDimId == null ? -1 : dims.indexOf(lonDimId);
-      const timePos = timeDimId == null ? -1 : dims.indexOf(timeDimId);
-      if (latPos < 0 || lonPos < 0) return;
+        const size = map.getSize();
+        const width = size.x;
+        const height = size.y;
 
-      const strides = dimensionSizes.map((_, index) => {
-        return dimensionSizes.slice(index + 1).reduce((acc, val) => acc * val, 1);
-      });
+        const bounds = map.getBounds();
+        const sw = bounds.getSouthWest();
+        const ne = bounds.getNorthEast();
 
-      const lonClick = normalizeLonToDataset(e.latlng.lng, lonData);
-      const latIndex = findNearestIndex(latData, e.latlng.lat);
-      const lonIndex = findNearestIndex(lonData, lonClick);
-      if (latIndex < 0 || lonIndex < 0) return;
+        // Use EPSG:3857 to match Leaflet default CRS.
+        const crs = map.options.crs;
+        const p1 = crs.project(L.latLng(sw.lat, sw.lng));
+        const p2 = crs.project(L.latLng(ne.lat, ne.lng));
+        const bbox = `${p1.x},${p1.y},${p2.x},${p2.y}`;
 
-      const timeSize = timePos >= 0 ? dimensionSizes[timePos] : 1;
-      const timeIndexSafe =
-        timePos >= 0
-          ? Math.max(0, Math.min(Number(selectedTime) || 0, timeSize - 1))
-          : 0;
+        const point = map.latLngToContainerPoint(e.latlng);
+        const x = Math.round(point.x);
+        const y = Math.round(point.y);
 
-      const indices = new Array(dims.length).fill(0);
-      if (timePos >= 0) indices[timePos] = timeIndexSafe;
-      indices[latPos] = latIndex;
-      indices[lonPos] = lonIndex;
+        const layerFullName = `${workspace}:${layer.layerName}`;
+        const params = {
+          SERVICE: "WMS",
+          VERSION: "1.1.1",
+          REQUEST: "GetFeatureInfo",
+          LAYERS: layerFullName,
+          QUERY_LAYERS: layerFullName,
+          STYLES: "",
+          BBOX: bbox,
+          FEATURE_COUNT: 1,
+          HEIGHT: height,
+          WIDTH: width,
+          FORMAT: "image/png",
+          INFO_FORMAT: "application/json",
+          SRS: "EPSG:3857",
+          X: x,
+          Y: y,
+        };
 
-      const dataIndex = indices.reduce((acc, idx, i) => acc + idx * strides[i], 0);
-      const rawValue = dataValues?.[dataIndex];
+        const url = new URL(baseUrl, window.location.href);
+        Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, String(v)));
 
-      const scaleFactorRaw = getAttribute(dataVar, "scale_factor");
-      const addOffsetRaw = getAttribute(dataVar, "add_offset");
-      const scaleFactor = Number.isFinite(Number(scaleFactorRaw))
-        ? Number(scaleFactorRaw)
-        : 1;
-      const addOffset = Number.isFinite(Number(addOffsetRaw)) ? Number(addOffsetRaw) : 0;
-      const fillValue = getAttribute(dataVar, "_FillValue");
-      const missingValue = getAttribute(dataVar, "missing_value");
+        const resp = await fetch(url.toString());
+        const json = await resp.json().catch(() => null);
 
-      const matchesFill = (raw, fill) => {
-        if (fill === undefined || fill === null) return false;
-        if (Array.isArray(fill)) return fill.includes(raw);
-        if (ArrayBuffer.isView(fill) && typeof fill.length === "number") {
-          if (fill.length === 1) return raw === fill[0];
+        let valueText = "No data";
+        if (json?.features?.length) {
+          const props = json.features[0]?.properties || {};
+          const keys = Object.keys(props);
+          if (keys.length) {
+            const v = props[keys[0]];
+            valueText = Number.isFinite(Number(v)) ? Number(v).toFixed(4) : String(v);
+          }
         }
-        return raw === fill;
-      };
 
-      const rawIsFill =
-        matchesFill(rawValue, fillValue) || matchesFill(rawValue, missingValue);
-      const value = rawIsFill
-        ? Number.NaN
-        : Number(rawValue) * scaleFactor + addOffset;
-
-      const content = Number.isFinite(value)
-        ? `<div style="min-width:180px"><div><b>Value</b>: ${value.toFixed(4)}${
-            dataUnits ? ` (${String(dataUnits)})` : ""
-          }</div><div style="opacity:0.75">lat: ${e.latlng.lat.toFixed(
-            4
-          )}, lon: ${e.latlng.lng.toFixed(4)}</div></div>`
-        : `<div style="min-width:180px"><b>No data</b><div style="opacity:0.75">lat: ${e.latlng.lat.toFixed(
-            4
-          )}, lon: ${e.latlng.lng.toFixed(4)}</div></div>`;
-
-      L.popup({ closeButton: true, autoClose: true })
-        .setLatLng(e.latlng)
-        .setContent(content)
-        .openOn(map);
+        const content = `<div style="min-width:180px"><div><b>Value</b>: ${valueText}</div><div style="opacity:0.75">lat: ${e.latlng.lat.toFixed(4)}, lon: ${e.latlng.lng.toFixed(4)}</div></div>`;
+        L.popup({ closeButton: true, autoClose: true })
+          .setLatLng(e.latlng)
+          .setContent(content)
+          .openOn(map);
+      } catch (_) {
+        // ignore
+      }
     },
   });
 
@@ -956,7 +936,6 @@ function Forecast() {
   const [coverageStats, setCoverageStats] = useState(null);
   const [statsOpen, setStatsOpen] = useState(false);
 
-  const ncMetaRef = useRef(null);
   const renderProgressRef = useRef(0);
   const renderProgressRafRef = useRef(null);
   const mapWrapperRef = useRef(null);
@@ -1206,178 +1185,47 @@ function Forecast() {
     setWmsLayer(null);
     setRenderLoading(false);
     setRenderProgress(0);
+    setCoverageStats(null);
+    setStatsOpen(false);
 
-    const loadFile = async () => {
+    const loadMeta = async () => {
       setLoading(true);
       try {
-        const response = await fetch(selectedFile);
-        const arrayBuffer = await response.arrayBuffer();
-        const magic = String.fromCharCode(
-          ...new Uint8Array(arrayBuffer.slice(0, 3))
-        );
-        if (magic !== "CDF") {
-          api.error({
-            message: "Unsupported NetCDF format",
-            description:
-              "This file is not NetCDF v3 (CDF). Please select a *_classic.nc file.",
-            placement: "bottomRight",
-          });
-          ncMetaRef.current = null;
-          setTimeOptions([]);
-          return;
-        }
-        const reader = new NetCDFReader(arrayBuffer);
-
-        const variables = reader.variables || [];
-        const dimensions = reader.dimensions || [];
-
-        const getDimName = (dimId) =>
-          String(dimensions?.[Number(dimId)]?.name ?? "");
-
-        const getScalarDimId = (variable) => {
-          const dimIds = variable?.dimensions;
-          if (!Array.isArray(dimIds) || dimIds.length === 0) return null;
-          return Number(dimIds[0]);
-        };
-
-        const getVarAttr = (variable, attrName) =>
-          variable?.attributes?.find((attr) => attr.name === attrName)?.value;
-
-        const scoreCoordVar = (variable, candidates) => {
-          if (!variable) return 0;
-          const name = String(variable?.name || "").toLowerCase();
-          const standardName = String(getVarAttr(variable, "standard_name") || "").toLowerCase();
-          const units = String(getVarAttr(variable, "units") || "").toLowerCase();
-
-          const nameMatches = candidates.some((candidate) => name.includes(candidate));
-          if (!nameMatches) return 0;
-
-          let score = 1;
-
-          // CF conventions: prefer real lat/lon
-          if (standardName === "latitude" || standardName === "longitude") score += 100;
-          if (units.includes("degree")) score += 50;
-
-          // Prefer explicit names over generic x/y
-          if (name.includes("lat") || name.includes("latitude")) score += 20;
-          if (name.includes("lon") || name.includes("longitude")) score += 20;
-          if (name === "y") score -= 10;
-          if (name === "x") score -= 10;
-
-          return score;
-        };
-
-        const findVar = (candidates) => {
-          const ranked = (variables || [])
-            .map((variable) => ({ variable, score: scoreCoordVar(variable, candidates) }))
-            .filter((x) => x.score > 0)
-            .sort((a, b) => b.score - a.score);
-          return ranked[0]?.variable;
-        };
-
-        const latVar = findVar(["lat", "latitude", "y"]);
-        const lonVar = findVar(["lon", "longitude", "x"]);
-        const timeVar = findVar(["time"]);
-
-        const latDimId = getScalarDimId(latVar);
-        const lonDimId = getScalarDimId(lonVar);
-        const timeDimId = getScalarDimId(timeVar);
-
-        const isCoordVarName = (name) =>
-          [latVar?.name, lonVar?.name, timeVar?.name].includes(name);
-
-        const isDataVarCandidate = (variable) => {
-          if (!variable || isCoordVarName(variable.name)) return false;
-          if (!Array.isArray(variable.dimensions) || variable.dimensions.length < 2)
-            return false;
-          if (variable.type === "char") return false;
-          if (latDimId == null || lonDimId == null) return false;
-          return (
-            variable.dimensions.includes(latDimId) &&
-            variable.dimensions.includes(lonDimId)
-          );
-        };
-
-        const dataVar =
-          variables.find(isDataVarCandidate) ||
-          variables.find((variable) => {
-            if (!variable || isCoordVarName(variable.name)) return false;
-            return Array.isArray(variable.dimensions) &&
-              variable.dimensions.length >= 2 &&
-              variable.type !== "char";
-          });
-
-        if (!latVar || !lonVar || !dataVar) {
-          throw new Error("Unable to locate lat/lon or data variables.");
-        }
-
-        const latData = reader.getDataVariable(latVar.name);
-        const lonData = reader.getDataVariable(lonVar.name);
-        if (!latData?.length || !lonData?.length) {
-          throw new Error("Lat/Lon arrays are missing or empty.");
-        }
-        const timeData = timeVar ? reader.getDataVariable(timeVar.name) : [0];
-
-        const dataValues = reader.getDataVariable(dataVar.name);
-        const dimensionSizes = (dataVar.dimensions || []).map((dimId) => {
-          const dim = dimensions?.[Number(dimId)];
-          return dim?.size ?? 0;
-        });
-
-        const timeUnits = timeVar?.attributes?.find(
-          (attr) => attr.name === "units"
-        )?.value;
-        const dataUnits = getAttribute(dataVar, "units");
-
-        ncMetaRef.current = {
-          dataVar,
-          dataValues,
-          latData,
-          lonData,
-          timeData,
-          dimensionSizes,
-          latDimId,
-          lonDimId,
-          timeDimId,
-          timeUnits,
-          dataUnits,
-        };
-
-        // Helpful debug info (keep lightweight)
+        let assetPath = null;
+        let assetUrl = null;
         try {
-          // eslint-disable-next-line no-console
-          console.log("[Forecast] NetCDF vars:", {
-            latVar: latVar?.name,
-            lonVar: lonVar?.name,
-            timeVar: timeVar?.name,
-            dataVar: dataVar?.name,
-            dataDims: (dataVar?.dimensions || []).map((id) => ({
-              id,
-              name: getDimName(id),
-              size: dimensions?.[Number(id)]?.size,
-            })),
-          });
+          const u = new URL(selectedFile, window.location.origin);
+          if (u.origin === window.location.origin) {
+            assetPath = u.pathname + u.search;
+          } else {
+            assetUrl = u.href;
+          }
         } catch (_) {
-          // ignore
+          assetUrl = selectedFile;
         }
 
-        const timeArray = Array.from(timeData || []);
-        const timeLabels = timeArray.map((value, index) => {
-          const dateLabel = buildDateLabel(value, timeUnits);
-          const label = dateLabel && dateLabel !== String(value)
-            ? dateLabel
-            : `T${index + 1}`;
-          return { label, value: index };
+        const metaResp = await Axios.post("../python/forecast/meta", {
+          params: { assetPath, assetUrl },
         });
 
-        setTimeOptions(timeLabels);
+        const labelsRaw = metaResp?.data?.timeLabels;
+        const labels = Array.isArray(labelsRaw) ? labelsRaw : [];
+        const cleaned = labels
+          .filter((o) => o && Number.isFinite(Number(o.value)))
+          .map((o) => {
+            const raw = String(o.label ?? o.value);
+            // Try parse with dayjs; if valid, format as date-only.
+            const d = dayjs(raw);
+            const label = d.isValid() ? d.format("YYYY-MM-DD") : raw.split(" ")[0];
+            return { label: label, value: Number(o.value) };
+          });
+
+        setTimeOptions(cleaned.length ? cleaned : [{ label: "T1", value: 0 }]);
         setSelectedTime(0);
       } catch (error) {
-        console.error(error);
         api.error({
-          message: "NetCDF read failed",
-          description:
-            "Unable to read this NetCDF file. Please use a NetCDF v3 (classic) file.",
+          message: "NetCDF metadata failed",
+          description: "Unable to read NetCDF metadata on server.",
           placement: "bottomRight",
         });
         setTimeOptions([]);
@@ -1386,7 +1234,7 @@ function Forecast() {
       }
     };
 
-    loadFile();
+    loadMeta();
   }, [selectedFile]);
 
   useEffect(() => {
@@ -1402,7 +1250,6 @@ function Forecast() {
   useEffect(() => {
     if (!wmsLayer) return;
     if (!selectedFile) return;
-    if (!ncMetaRef.current) return;
     if (!Array.isArray(timeOptions) || timeOptions.length === 0) return;
 
     if (renderLoading) {
@@ -1429,15 +1276,6 @@ function Forecast() {
       api.info({
         message: "Select a NetCDF file",
         description: "Please select a NetCDF file first.",
-        placement: "bottomRight",
-      });
-      return;
-    }
-
-    if (!ncMetaRef.current) {
-      api.info({
-        message: "Select a valid NetCDF file",
-        description: "Please load a NetCDF v3 (classic) file first.",
         placement: "bottomRight",
       });
       return;
@@ -1589,7 +1427,7 @@ function Forecast() {
   };
 
   return (
-    <Spin spinning={loading} tip="Loading NetCDF...">
+    <Spin spinning={loading} tip="Loading ...">
       {contextHolder}
       <Layout style={{ padding: "0", margin: "0", height: "100vh" }}>
         <Header style={headerStyle}>
@@ -2018,7 +1856,7 @@ function Forecast() {
                 geojson={clipGeojsonData || pakistanGeojsonData}
                 darkmode={darkmode}
               />
-              <NcValueOnClick ncMetaRef={ncMetaRef} selectedTime={selectedTime} />
+              <WmsValueOnClick layer={wmsLayer} />
               <LayersControl position="topleft">
                 <LayersControl.BaseLayer
                   name="Google Satellite"

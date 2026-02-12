@@ -122,7 +122,12 @@ function EarthEngine(props) {
                 ? { precipitation: precipitation }
                 : {}),
               ...(indicator === "DrySpell" ? {} : { aggr: calcval }),
-              ...(indicator === "SPI_CHIRPS" || indicator === "SPI_ERA5L"
+              ...(indicator === "SPI_CHIRPS" ||
+              indicator === "SPI_ERA5L" ||
+              indicator === "RDI_WAPOR" ||
+              indicatorTwo === "SPI_CHIRPS" ||
+              indicatorTwo === "SPI_ERA5L" ||
+              indicatorTwo === "RDI_WAPOR"
                 ? { months: months }
                 : {}),
               indice: !compare

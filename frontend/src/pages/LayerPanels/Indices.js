@@ -60,7 +60,10 @@ const Indices = ({
         dispatch(setSelected(null));
       } else {
         setshowprecipitation(e === "extreme_rainfall" || e === "DrySpell");
-        setshowmonths(e === "SPI_CHIRPS" || e === "SPI_ERA5L");
+        // Show months selector for SPI variants and RDI (WaPOR) time-scales
+        setshowmonths(
+          e === "SPI_CHIRPS" || e === "SPI_ERA5L" || e === "RDI_WAPOR"
+        );
         if (e === "DrySpell" || e === "extreme_rainfall") {
           openNotificationWithIcon(
             "info",

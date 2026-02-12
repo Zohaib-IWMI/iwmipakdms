@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 from shapely.geometry import shape
 import json
 from spi_calc import computeSPI
+import math
 from collections import defaultdict
 import concurrent.futures
 import requests
@@ -260,6 +261,98 @@ def getIndice(analysis_startmonth, analysis_endmonth, analysis_startyear, analys
         RDI = img.subtract(Mean).divide(
             Std).rename('RDI_WAPOR')
         return img.addBands(RDI)
+
+    def _qnorm(x):
+        return x.multiply(2).subtract(1).erfInv().multiply(math.sqrt(2))
+
+    def _compute_cdf(images):
+        percentiles = ee.List.sequence(0, 100)
+        cdf = images.reduce(ee.Reducer.percentile(percentiles)).toArray()
+        # Add a very large max value to avoid edge-case where the max is not found.
+        return cdf.arrayCat(ee.Image.constant(1e9).toArray(), 0)
+
+    def _standardize_with_cdf(images, cdf, out_band_name):
+        def map_function(img):
+            # Find percentile rank (0..100) of current value within the CDF.
+            p = cdf.gte(img).arrayArgmax().arrayFlatten([[out_band_name]]).toInt()
+            z = _qnorm(p.divide(100).clamp(0.00001, 0.99999)).rename(out_band_name)
+            return z.copyProperties(img, ['system:time_start']).set({
+                'year': img.get('year'),
+                'month': img.get('month')
+            })
+        return images.map(map_function)
+
+    def _parse_timescale_months(value, allowed=None, default_value=1):
+        try:
+            months = int(value)
+        except Exception:
+            months = default_value
+        if months <= 0:
+            months = default_value
+        if allowed is not None and months not in allowed:
+            months = default_value
+        return months
+
+    def _build_wapor_monthly_collection(
+        asset_template,
+        start_year,
+        end_year,
+        band_name,
+        start_month=1,
+        end_month=12,
+    ):
+        """Build an ImageCollection from WaPOR v3 monthly GeoTIFFs.
+
+        Important: only create month paths inside the requested bounds.
+        This prevents generating non-existent future objects like YYYY-04
+        when the analysis ends at YYYY-01.
+        """
+        images = []
+        if end_year < start_year:
+            return ee.ImageCollection([])
+
+        start_month = int(start_month)
+        end_month = int(end_month)
+        start_month = max(1, min(12, start_month))
+        end_month = max(1, min(12, end_month))
+
+        for year in range(int(start_year), int(end_year) + 1):
+            month_start = start_month if year == int(start_year) else 1
+            month_end = end_month if year == int(end_year) else 12
+            if year == int(start_year) and year == int(end_year) and month_end < month_start:
+                continue
+
+            for month in range(month_start, month_end + 1):
+                month_formatted = f"{month:02d}"
+                path = asset_template.format(year=year, month=month_formatted)
+                img = ee.Image.loadGeoTIFF(path).rename(band_name).set({
+                    'system:time_start': ee.Date.fromYMD(year, month, 1).millis(),
+                    'year': year,
+                    'month': month
+                })
+                images.append(img)
+        return ee.ImageCollection(images).filterBounds(geometry)
+
+    def _aggregate_rdi_timescale(prec_coll, ret_coll, months):
+        # Build trailing-window sums: sum(P) / sum(RET) over the previous `months`.
+        times = prec_coll.reduceColumns(ee.Reducer.minMax(), ['system:time_start'])
+        time_start = ee.Date(times.get('min')).advance(months, 'month')
+        time_stop = ee.Date(times.get('max')).advance(1, 'month')
+
+        def map_function(img):
+            t = img.date()
+            window_start = t.advance(-months, 'month')
+            p_sum = prec_coll.filterDate(window_start, t).sum()
+            ret_sum = ret_coll.filterDate(window_start, t).sum()
+            # Avoid divide-by-zero; RET should be > 0 but keep it safe.
+            ret_safe = ret_sum.where(ret_sum.eq(0), 1e-6)
+            ratio = p_sum.divide(ret_safe).rename('RDI_WAPOR')
+            return ratio.copyProperties(img, ['system:time_start']).set({
+                'year': t.get('year'),
+                'month': t.get('month')
+            })
+
+        return prec_coll.map(map_function).filterDate(time_start, time_stop)
     def add_esi_band(img):
         img = img.clip(geometry)
         month = ee.Number(img.get('month')).toInt()
@@ -630,48 +723,56 @@ def getIndice(analysis_startmonth, analysis_endmonth, analysis_startyear, analys
                 ]
             }
         case 'RDI_WAPOR':
-            # Create three dekadal images per month by repeating the monthly
-            # files with dekad timestamps (D1=day1, D2=day11, D3=day21).
-            rdi_image_list = []
+            # Time-scaled standardized RDI (SPI-style):
+            # 1) build monthly WAPOR P and RET collections (history)
+            # 2) aggregate ratio over trailing `months` window: sum(P)/sum(RET)
+            # 3) standardize using empirical CDF -> normal scores (z)
+            allowed_timescales = [1, 2, 6, 9, 12, 24]
+            months = _parse_timescale_months(month_user, allowed=allowed_timescales, default_value=1)
 
-            for year in range(analysis_startyear, analysis_endyear + 1):
-                for month in range(1, 13):
-                    month_formatted = f"{month:02d}"
-                    prec_image_path = (f"gs://fao-gismgr-wapor-3-data/DATA/WAPOR-3/"
-                                       f"MAPSET/L1-PCP-M/WAPOR-3.L1-PCP-M.{year}-{month_formatted}.tif")
-                    ret_image_path = (f"gs://fao-gismgr-wapor-3-data/DATA/WAPOR-3/"
-                                      f"MAPSET/L1-RET-M/WAPOR-3.L1-RET-M.{year}-{month_formatted}.tif")
+            # WaPOR v3 monthly PCP/RET GeoTIFFs are not available for early years
+            # (e.g., 2013 paths will 404). Use the known available start year.
+            history_start_year = 2018
 
-                    # repeat monthly file for dekads 1..3 with adjusted timestamps
-                    for dekad in range(1, 4):
-                        # load monthly images (same file) and set dekad timestamp
-                        prec_image = ee.Image.loadGeoTIFF(prec_image_path).set({
-                            'system:time_start': ee.Date.fromYMD(year, month, 1).advance((dekad - 1) * 10, 'day').millis(),
-                            'year': year,
-                            'month': month,
-                            'dekad': dekad
-                        })
-                        ret_image = ee.Image.loadGeoTIFF(ret_image_path).set({
-                            'system:time_start': ee.Date.fromYMD(year, month, 1).advance((dekad - 1) * 10, 'day').millis(),
-                            'year': year,
-                            'month': month,
-                            'dekad': dekad
-                        })
+            # If the requested period is earlier than WaPOR availability, return a
+            # clear error instead of letting Earth Engine fail on missing objects.
+            if analysis_startyear < history_start_year:
+                raise ValueError(
+                    f"RDI (WaPOR) is available from {history_start_year}-01 onward. "
+                    f"Requested start: {analysis_startyear:04d}-{analysis_startmonth:02d}."
+                )
+            prec_template = (
+                "gs://fao-gismgr-wapor-3-data/DATA/WAPOR-3/"
+                "MAPSET/L1-PCP-M/WAPOR-3.L1-PCP-M.{year}-{month}.tif"
+            )
+            ret_template = (
+                "gs://fao-gismgr-wapor-3-data/DATA/WAPOR-3/"
+                "MAPSET/L1-RET-M/WAPOR-3.L1-RET-M.{year}-{month}.tif"
+            )
 
-                        rdi_image = prec_image.divide(ret_image).set({
-                            'system:time_start': ee.Date.fromYMD(year, month, 1).advance((dekad - 1) * 10, 'day').millis(),
-                            'year': year,
-                            'month': month,
-                            'dekad': dekad
-                        })
+            prec_all = _build_wapor_monthly_collection(
+                prec_template,
+                history_start_year,
+                analysis_endyear,
+                'P',
+                start_month=1,
+                end_month=analysis_endmonth,
+            )
+            ret_all = _build_wapor_monthly_collection(
+                ret_template,
+                history_start_year,
+                analysis_endyear,
+                'RET',
+                start_month=1,
+                end_month=analysis_endmonth,
+            )
 
-                        rdi_image_list.append(rdi_image)
+            rdi_all = _aggregate_rdi_timescale(prec_all, ret_all, months)
+            cdf = _compute_cdf(rdi_all)
+            rdi_std_all = _standardize_with_cdf(rdi_all, cdf, 'RDI_WAPOR')
 
-            rdi_collection = ee.ImageCollection(rdi_image_list)
-            rdi_collection = rdi_collection.filterDate(analysis_startdate, analysis_enddate.advance(1, 'month')).filterBounds(geometry)
-            rdi_collection = monthlyMean(rdi_collection)
-            rdi = rdi_collection.map(add_rdi_band)
-            img_collection = rdi.select(indice)
+            rdi_std = rdi_std_all.filterDate(analysis_startdate, analysis_enddate.advance(1, 'month')).filterBounds(geometry)
+            img_collection = rdi_std.select(indice)
             indiceVis = {
                 # Align RDI legend with SPI classification ranges
                 'min': -3.0,

@@ -444,6 +444,43 @@ app.post("/forecast/apply", async (req, res) => {
   res.json({ success: true, jobId, storeName, workspace });
 });
 
+// Read NetCDF metadata (time dimension labels/count) server-side.
+// This supports NetCDF4 files that the browser cannot parse.
+app.post("/forecast/meta", async (req, res) => {
+  const params = req.body?.params || req.body || {};
+  const assetUrl = buildAssetUrl({ assetUrl: params.assetUrl, assetPath: params.assetPath });
+
+  if (!assetUrl) {
+    return res.status(400).json({ success: false, message: "assetUrl/assetPath is required" });
+  }
+
+  const py = spawn("python", ["forecast_meta.py", "--assetUrl", assetUrl], { cwd: __dirname });
+
+  let out = "";
+  let err = "";
+  py.stdout.on("data", (d) => {
+    out += d.toString();
+  });
+  py.stderr.on("data", (d) => {
+    err += d.toString();
+  });
+
+  py.on("close", (code) => {
+    if (code !== 0) {
+      return res.status(500).json({ success: false, message: "forecast meta failed", errorDetails: (err || "").slice(0, 2000) });
+    }
+    try {
+      const payload = JSON.parse(out || "{}");
+      if (!payload || payload.success === false) {
+        return res.status(500).json({ success: false, message: payload?.message || "forecast meta failed" });
+      }
+      return res.json(payload);
+    } catch (e) {
+      return res.status(500).json({ success: false, message: "forecast meta parse failed", errorDetails: String(e?.message || e) });
+    }
+  });
+});
+
 app.get("/forecast/jobs/:jobId", (req, res) => {
   const { jobId } = req.params;
   const job = activeForecastJobs.get(jobId);

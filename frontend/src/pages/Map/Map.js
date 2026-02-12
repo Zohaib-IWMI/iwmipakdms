@@ -868,6 +868,17 @@ function MapWrapper(props) {
     setOpac(e);
   }, []);
 
+  // Keep month-window choices consistent with the selected index.
+  useEffect(() => {
+    if (selected === "RDI_WAPOR") {
+      const allowed = new Set(["1", "2", "6", "9", "12", "24"]);
+      const current = String(months);
+      if (!allowed.has(current)) {
+        setmonths("1");
+      }
+    }
+  }, [selected]);
+
   const resetAll = (e) => {
     if (e !== "draw") {
       setselectedTehsil(null);
@@ -1484,22 +1495,24 @@ function MapWrapper(props) {
                       }}
                       value={months}
                       options={[
-                        {
-                          value: "1",
-                          label: "1",
-                        },
-                        {
-                          value: "3",
-                          label: "3",
-                        },
-                        {
-                          value: "6",
-                          label: "6",
-                        },
-                        {
-                          value: "12",
-                          label: "12",
-                        },
+                        ...(selected === "RDI_WAPOR"
+                          ? [
+                              { value: "1", label: "1" },
+                              { value: "2", label: "2" },
+                              { value: "6", label: "6" },
+                              { value: "9", label: "9" },
+                              { value: "12", label: "12" },
+                              { value: "24", label: "24" },
+                            ]
+                          : [
+                              { value: "1", label: "1" },
+                              { value: "2", label: "2" },
+                              { value: "3", label: "3" },
+                              { value: "6", label: "6" },
+                              { value: "9", label: "9" },
+                              { value: "12", label: "12" },
+                              { value: "24", label: "24" },
+                            ]),
                       ]}
                     />
                   </>

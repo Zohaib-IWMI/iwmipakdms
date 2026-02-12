@@ -70,7 +70,9 @@ function Graph(props) {
           boundarySelect: boundarySelect,
           ...(indicator === "DrySpell" ? { precipitation: precipitation } : {}),
           ...(indicator === "DrySpell" ? {} : { aggr: calcval }),
-          ...(indicator === "SPI_CHIRPS" || indicator === "SPI_ERA5L"
+          ...(indicator === "SPI_CHIRPS" ||
+          indicator === "SPI_ERA5L" ||
+          indicator === "RDI_WAPOR"
             ? { months: months }
             : {}),
           indice: indicator === "CWDI" ? "CWD" : indicator,

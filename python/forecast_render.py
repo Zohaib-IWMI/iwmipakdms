@@ -665,7 +665,26 @@ def main() -> None:
             rest_base = args.geoserverUrl.rstrip("/")
             style_name, sld_body = _sld_for_index(args.indexKey)
             _ensure_style(rest_base, style_name, sld_body, args.geoserverUser, args.geoserverPass)
-            _set_layer_default_style(rest_base, args.workspace, coverage_name, style_name, args.geoserverUser, args.geoserverPass)
+
+            # Wait until GeoServer has registered the new layer (it can be async)
+            layer_rest = f"{rest_base}/rest/layers/{args.workspace}:{coverage_name}.json"
+            for _ in range(30):
+                r = requests.get(layer_rest, auth=(args.geoserverUser, args.geoserverPass), timeout=30)
+                if r.status_code == 200:
+                    break
+                time.sleep(1)
+            else:
+                raise RuntimeError("GeoServer layer did not become available within timeout")
+
+            # Set default style with a few retry attempts
+            for _ in range(6):
+                try:
+                    _set_layer_default_style(rest_base, args.workspace, coverage_name, style_name, args.geoserverUser, args.geoserverPass)
+                    break
+                except Exception:
+                    time.sleep(1)
+            else:
+                raise RuntimeError("Failed to assign style after retries")
         except Exception as e:
             # Styling failure should not break the main rendering; default raster style will be used.
             _emit_progress(95, f"Style skipped: {str(e)[:80]}")
