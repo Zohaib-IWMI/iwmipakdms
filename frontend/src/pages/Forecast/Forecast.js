@@ -901,6 +901,99 @@ function BoundaryOutlineLayer({ geojson, darkmode }) {
   return null;
 }
 
+function AdminOutlineLayer({ selectedUnit, selectedDistrict, darkmode }) {
+  const map = useMap();
+
+  useEffect(() => {
+    if (!map) return undefined;
+
+    const paneName = "adminOutlinePane";
+    if (!map.getPane(paneName)) {
+      const pane = map.createPane(paneName);
+      pane.style.zIndex = 655;
+      pane.style.pointerEvents = "none";
+    }
+
+    let typeName = "PakDMS:units";
+    let CQL_FILTER = null;
+    let dashArray = "";
+    let weight = 1.4;
+
+    // Default: show all provinces (units) at Pakistan level.
+    if (selectedDistrict) {
+      // When a district is selected, show tehsil boundaries.
+      typeName = "PakDMS:tehsils";
+      CQL_FILTER = `district='${selectedDistrict}'`;
+      dashArray = "2 4";
+      weight = 1.1;
+    } else if (selectedUnit) {
+      // When a province is selected, show district boundaries.
+      typeName = "PakDMS:districts";
+      CQL_FILTER = `unit='${selectedUnit}'`;
+      dashArray = "4 4";
+      weight = 1.2;
+    } else {
+      typeName = "PakDMS:units";
+      CQL_FILTER = null;
+      dashArray = "";
+      weight = 1.4;
+    }
+
+    const controller = new AbortController();
+    let layer = null;
+
+    const fetchAndDraw = async () => {
+      try {
+        const resp = await Axios.get("../geoserver/ows", {
+          signal: controller.signal,
+          params: {
+            service: "WFS",
+            version: "1.0.0",
+            request: "GetFeature",
+            typeName,
+            outputFormat: "application/json",
+            srsName: "EPSG:4326",
+            ...(CQL_FILTER ? { CQL_FILTER } : {}),
+          },
+        });
+
+        const fc = resp?.data;
+        if (!fc || !Array.isArray(fc.features) || fc.features.length === 0) return;
+
+        layer = L.geoJSON(fc, {
+          pane: paneName,
+          style: {
+            color: darkmode ? "#ffffff" : "#111111",
+            weight,
+            opacity: 0.75,
+            fill: false,
+            ...(dashArray ? { dashArray } : {}),
+          },
+        });
+
+        layer.addTo(map);
+      } catch (e) {
+        // ignore aborts and WFS failures (no outline is fine)
+      }
+    };
+
+    fetchAndDraw();
+
+    return () => {
+      controller.abort();
+      if (layer) {
+        try {
+          map.removeLayer(layer);
+        } catch (_) {
+          // ignore
+        }
+      }
+    };
+  }, [map, selectedUnit, selectedDistrict, darkmode]);
+
+  return null;
+}
+
 function Forecast() {
   const dispatch = useDispatch();
   const navigate = useNavigate();
@@ -1837,7 +1930,7 @@ function Forecast() {
                   }}
                 >
                   {loading
-                    ? "Loading NetCDF..."
+                    ? "Loading ..."
                     : `Loading ${renderProgress}%`}
                 </div>
               )}
@@ -1854,6 +1947,11 @@ function Forecast() {
               />
               <BoundaryOutlineLayer
                 geojson={clipGeojsonData || pakistanGeojsonData}
+                darkmode={darkmode}
+              />
+              <AdminOutlineLayer
+                selectedUnit={selectedUnit}
+                selectedDistrict={selectedDistrict}
                 darkmode={darkmode}
               />
               <WmsValueOnClick layer={wmsLayer} />
